@@ -1,54 +1,98 @@
 # Racing
 
-A small SFML racing game.
+A small pure-C racing game core with an optional LVGL view for embedded
+targets.
 
 ## Project Layout
 
-- `src/`: C/C++ source files.
-- `include/`: project headers.
-- `assets/images/`: image resources.
-- `assets/audio/`: music and sound effects.
-- `assets/fonts/`: font files.
+- `include/config.h`: screen size, view distance, timing, and tuning macros.
+- `include/game.h`: public game state and input API.
+- `include/render_lvgl.h`: optional LVGL canvas view API.
+- `src/game.c`: gameplay, projection, collectibles, and track generation.
+- `src/render_lvgl.c`: LVGL canvas renderer for Linux or embedded targets.
+- `src/render_sdl.c`: SDL renderer for desktop preview and asset checks.
+- `src/desktop_main.c`: SDL window, timing, and keyboard loop.
+- `src/main.c`: small smoke-test executable.
 
-The background uses two transparent mountain layers:
-
-- `assets/images/mountain_far.png`: slow far-background parallax.
-- `assets/images/mountain_near.png`: faster near-background parallax.
-
-## Build
+## Build The Core
 
 ```sh
-cmake -S . -B build
-cmake --build build
+cmake -S . -B build-c
+cmake --build build-c
 ```
 
-Run the game from the project root or directly from the generated executable.
+The default build produces `libracing_core.a` and a tiny smoke executable. The
+core has no desktop window dependency.
+
+## Play On Desktop
+
+After SDL2 and SDL2_image are installed, build and run:
+
+```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+./build/racing_desktop
+```
+
+Controls:
+
+- `W`/`Up`: accelerate
+- `S`/`Down`: brake
+- `A`/`Left`, `D`/`Right`: steer
+- `Space`: boost
+- `F`: fly when energy reaches 1000
+- `Esc` or `P`: pause/resume
+
+## LVGL
+
+LVGL can run on Linux through its SDL, framebuffer, or DRM/KMS backends. If
+`pkg-config` can find `lvgl`, CMake builds the separate `racing_lvgl` adapter
+declared in `include/render_lvgl.h`:
+
+```c
+#include "game.h"
+#include "render_lvgl.h"
+
+RacingGame game;
+racing_game_init(&game, seed);
+
+RacingLvglView *view = racing_lvgl_create(lv_scr_act(), &game);
+racing_lvgl_set_input(view, input);
+```
+
+On embedded hardware, initialize LVGL, your display driver, and your input
+driver in the board project, then create the `RacingLvglView` on the screen or
+parent object you want to use.
+
+For tighter RAM control, provide the canvas buffer yourself:
+
+```c
+static lv_color_t canvas_buf[WIN_WIDTH * WIN_HEIGHT];
+RacingLvglView *view = racing_lvgl_create_with_buffer(
+    lv_scr_act(), &game, canvas_buf, WIN_WIDTH * WIN_HEIGHT);
+```
+
+## Performance Tuning
+
+The embedded build can override these at compile time:
+
+```sh
+-DWIN_WIDTH=480 -DWIN_HEIGHT=320 -DVIEW_DISTANCE=140 -DRACING_LVGL_FRAME_MS=33
+```
+
+Lower `VIEW_DISTANCE` reduces road polygons per frame. Higher
+`RACING_LVGL_FRAME_MS` lowers refresh rate and CPU use. Smaller screen
+dimensions reduce canvas memory and fill cost.
 
 ## Game States
 
-- Start: press `Enter` to begin.
-- Playing: press `Esc` to pause.
-- Paused: click `Back to Start` or `Exit`.
-- Win: reached after 3 laps; click `Back to Start` or `Exit`.
-- Exit: closes the game window.
+- Desktop preview starts driving immediately.
+- Playing: press `Esc` or `P` to pause/resume.
+- Win: reached after 3 laps.
+- Exit: close the SDL window.
 
-## Audio
+## Notes
 
-Run normally if you want sound:
-
-```sh
-./build/main
-```
-
-Only use this fallback when the machine has no working audio device:
-
-```sh
-RACING_NO_AUDIO=1 ./build/main
-```
-
-If you used the fallback before and want sound again, clear the variable:
-
-```sh
-unset RACING_NO_AUDIO
-./build/main
-```
+The old SFML renderer was removed so the gameplay code stays portable C. Audio
+is intentionally not wired into the core; add it in the target-specific
+platform layer if the embedded board has audio output.

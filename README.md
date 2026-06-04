@@ -3,6 +3,36 @@
 A small pure-C racing game core with an optional LVGL view for embedded
 targets.
 
+## Dependencies
+
+The gameplay core is plain C and can build by itself. Desktop preview and the
+LVGL adapter are optional and only build when their libraries are available.
+
+On Debian or Ubuntu, install the desktop preview dependencies with:
+
+```sh
+sudo apt-get update
+sudo apt-get install -y libsdl2-dev libsdl2-image-dev libsdl2-ttf-dev
+```
+
+If `cmake` says SDL2 is missing, the core is still fine. You can build the
+library and smoke test without the desktop renderer:
+
+```sh
+cmake -S . -B build-c
+cmake --build build-c
+```
+
+If CMake mentions a missing toolchain file such as a NuttX path, you are
+probably reusing an old build directory from another project. Start from a
+fresh directory, or delete the stale cache first:
+
+```sh
+unset CMAKE_TOOLCHAIN_FILE
+rm -rf build build-c build-fast
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+```
+
 ## Project Layout
 
 - `include/config.h`: screen size, view distance, timing, and tuning macros.
@@ -26,7 +56,7 @@ core has no desktop window dependency.
 
 ## Play On Desktop
 
-After SDL2 and SDL2_image are installed, build and run:
+After SDL2, SDL2_image, and SDL2_ttf are installed, build and run:
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
@@ -41,6 +71,8 @@ Controls:
 - `A`/`Left`, `D`/`Right`: steer
 - `Space`: boost
 - `F`: fly when energy reaches 1000
+- `Enter`: start or resume
+- `R`: restart
 - `Esc` or `P`: pause/resume
 
 ## LVGL
@@ -86,9 +118,10 @@ dimensions reduce canvas memory and fill cost.
 
 ## Game States
 
-- Desktop preview starts driving immediately.
-- Playing: press `Esc` or `P` to pause/resume.
-- Win: reached after 3 laps.
+- Start: press `Enter` to begin.
+- Playing: steer, accelerate, and collect奶龙道具.
+- Paused: press `Enter` to resume, or `R` to restart.
+- Win: reached after 3 laps; press `Enter` or `R` to restart.
 - Exit: close the SDL window.
 
 ## Notes

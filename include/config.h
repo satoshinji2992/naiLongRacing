@@ -2,11 +2,11 @@
 #define RACING_CONFIG_H
 
 #ifndef WIN_WIDTH
-#define WIN_WIDTH 320
+#define WIN_WIDTH 480
 #endif
 
 #ifndef WIN_HEIGHT
-#define WIN_HEIGHT 240
+#define WIN_HEIGHT 320
 #endif
 
 #ifndef ROAD_WIDTH

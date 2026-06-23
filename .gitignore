@@ -1,14 +1,21 @@
+# 桌面 CMake 构建
 build/
 cmake-build-*/
 CMakeFiles/
 CMakeCache.txt
 cmake_install.cmake
-Makefile
+compile_commands.json
 
+# NuttX 构建产物(本目录内)
+.built
+.depend
+Make.dep
 *.o
 *.obj
 *.exe
 *.out
 
+# 编辑器/系统
 .codex
 *:Zone.Identifier
+.vscode/

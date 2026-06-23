@@ -1,0 +1,59 @@
+#
+# For a description of the syntax of this configuration file,
+# see the file kconfig-language.txt in the NuttX tools repository.
+#
+
+menuconfig EXAMPLES_RACING
+	tristate "Racing Game Demo"
+	default n
+	---help---
+		Enable build the Racing Game Demo programs
+
+
+if EXAMPLES_RACING
+
+config EXAMPLES_RACING_PRIORITY
+	int "racing task priority"
+	default 100
+
+config EXAMPLES_RACING_STACKSIZE
+	int "racing stack size"
+	default 327680
+
+config EXAMPLES_RACING_FB_DEVPATH
+	string "Framebuffer device path"
+	default "/dev/fb0"
+	---help---
+		The framebuffer device the renderer writes to. Default: "/dev/fb0".
+
+config EXAMPLES_RACING_INPUT_DEVPATH
+	string "Touchscreen device path"
+	default "/dev/input0"
+	depends on INPUT_TOUCHSCREEN
+	---help---
+		The path to the touchscreen device. Default: "/dev/input0"
+
+config EXAMPLES_RACING_BUTTON1_DEVPATH
+	string "Primary GPIO button device path"
+	default "/dev/gpio1"
+	---help---
+		Primary physical button. A rising edge starts/resumes the game,
+		pauses while playing, and restarts after winning.
+
+config EXAMPLES_RACING_BUTTON2_DEVPATH
+	string "Secondary GPIO button device path"
+	default "/dev/gpio3"
+	---help---
+		Optional secondary physical button. If present, it maps to boost.
+
+config EXAMPLES_RACING_BUTTON3_DEVPATH
+	string "Third GPIO button device path"
+	default "/dev/gpio4"
+	---help---
+		Optional third physical button. If present, it maps to fly.
+
+config EXAMPLES_RACING_DATA_ROOT
+	string "Racing Data Root"
+	default "/data"
+
+endif

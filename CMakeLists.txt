@@ -35,27 +35,9 @@ foreach(racing_define
 endforeach()
 
 if(PkgConfig_FOUND)
-    pkg_check_modules(LVGL lvgl)
     pkg_check_modules(SDL2 sdl2)
     pkg_check_modules(SDL2_IMAGE SDL2_image)
     pkg_check_modules(SDL2_TTF SDL2_ttf)
-endif()
-
-if(LVGL_FOUND)
-    add_library(racing_lvgl
-        src/render_lvgl.c
-    )
-
-    target_compile_definitions(racing_lvgl PUBLIC RACING_WITH_LVGL=1)
-    target_include_directories(racing_lvgl PUBLIC include ${LVGL_INCLUDE_DIRS})
-    target_compile_options(racing_lvgl PRIVATE -Wall -Wextra -Wpedantic -O2 ${LVGL_CFLAGS_OTHER})
-    target_link_libraries(racing_lvgl PUBLIC racing_core ${LVGL_LIBRARIES})
-
-    if(SDL2_FOUND)
-        target_include_directories(racing_lvgl PUBLIC ${SDL2_INCLUDE_DIRS})
-        target_compile_options(racing_lvgl PRIVATE ${SDL2_CFLAGS_OTHER})
-        target_link_libraries(racing_lvgl PUBLIC ${SDL2_LIBRARIES})
-    endif()
 endif()
 
 add_executable(main src/main.c)
@@ -78,9 +60,6 @@ if(RACING_ENABLE_LTO)
     if(racing_lto_supported)
         set_property(TARGET racing_core PROPERTY INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
         set_property(TARGET main PROPERTY INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
-        if(TARGET racing_lvgl)
-            set_property(TARGET racing_lvgl PROPERTY INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
-        endif()
         if(TARGET racing_desktop)
             set_property(TARGET racing_desktop PROPERTY INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
         endif()

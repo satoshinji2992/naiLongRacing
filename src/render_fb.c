@@ -988,6 +988,53 @@ static void render_hud(RacingFbView *v)
     render_mode_overlay(v);
 }
 
+static void render_button(RacingFbView *v, int x, int y, int w, int h,
+                          const char *title, const char *hint, uint32_t color)
+{
+    fb_fill_rect_alpha(v, x, y, x + w - 1, y + h - 1, 0x102342u, 232);
+    fb_fill_rect(v, x, y, x + w - 1, y, color);
+    fb_fill_rect(v, x, y + h - 1, x + w - 1, y + h - 1, color);
+    fb_fill_rect(v, x, y, x, y + h - 1, color);
+    fb_fill_rect(v, x + w - 1, y, x + w - 1, y + h - 1, color);
+    fb_draw_text_centered(v, x + w / 2, y + 10, title, 0xffffffu);
+    fb_draw_text_centered(v, x + w / 2, y + 32, hint, 0xbfd1ffu);
+}
+
+static void render_menu_background(RacingFbView *v)
+{
+    fb_clear(v, COL_SKY);
+    render_sky_decor(v);
+    fb_fill_rect_alpha(v, 0, WIN_HEIGHT / 2, WIN_WIDTH - 1, WIN_HEIGHT - 1,
+                       0x102342u, 70);
+}
+
+static void render_gyro_rows(RacingFbView *v, const Jy60Sample *sample)
+{
+    char buf[96];
+    int y = 72;
+
+    if (sample == NULL || !sample->valid) {
+        fb_draw_text_centered(v, WIN_WIDTH / 2, 126, "Waiting for JY60 data", 0xffffffu);
+        fb_draw_text_centered(v, WIN_WIDTH / 2, 154, "/dev/uart1 9600 8N1", 0xbfd1ffu);
+        return;
+    }
+
+    snprintf(buf, sizeof(buf), "Frames %u", sample->frame_count);
+    fb_draw_text(v, 28, y, buf, 0xbfd1ffu);
+    y += 28;
+    snprintf(buf, sizeof(buf), "ACC  X:%6.2fg Y:%6.2fg Z:%6.2fg",
+             sample->acc_x_g, sample->acc_y_g, sample->acc_z_g);
+    fb_draw_text(v, 28, y, buf, 0xffffffu);
+    y += 28;
+    snprintf(buf, sizeof(buf), "GYRO X:%6.1f Y:%6.1f Z:%6.1f dps",
+             sample->gyro_x_dps, sample->gyro_y_dps, sample->gyro_z_dps);
+    fb_draw_text(v, 28, y, buf, 0xffffffu);
+    y += 28;
+    snprintf(buf, sizeof(buf), "ANGLE R:%6.1f P:%6.1f Y:%6.1f deg",
+             sample->roll_deg, sample->pitch_deg, sample->yaw_deg);
+    fb_draw_text(v, 28, y, buf, 0xffffffu);
+}
+
 /****************************************************************************
  * Public API
  ****************************************************************************/
@@ -1133,4 +1180,46 @@ void racing_fb_render(RacingFbView *v)
         acc_draw = 0;
         acc_present = 0;
     }
+}
+
+void racing_fb_render_menu(RacingFbView *v)
+{
+    int bw = WIN_WIDTH - 160;
+    int bh = 54;
+    int bx;
+    int by = 88;
+
+    if (v == NULL) {
+        return;
+    }
+
+    if (bw < 220) {
+        bw = WIN_WIDTH - 40;
+    }
+    bx = (WIN_WIDTH - bw) / 2;
+
+    render_menu_background(v);
+    fb_draw_text_centered(v, WIN_WIDTH / 2, 24, "Racing", 0xffffffu);
+    fb_draw_text_centered(v, WIN_WIDTH / 2, 52, "Select Mode", 0xd9e7ffu);
+    render_button(v, bx, by, bw, bh, "Original Mode", "Touch left / right, GPIO boost", 0x55d37au);
+    by += bh + 18;
+    render_button(v, bx, by, bw, bh, "Gyro Mode", "JY60 arc left / right, touch-hold boost", 0x47a8ffu);
+    by += bh + 18;
+    render_button(v, bx, by, bw, bh, "Test Mode", "Show and print JY60 data", 0xffcc47u);
+    fb_draw_text_centered(v, WIN_WIDTH / 2, WIN_HEIGHT - 28, "JY60 uses /dev/uart1 9600 8N1", 0xbfd1ffu);
+    fb_present(v);
+}
+
+void racing_fb_render_gyro_test(RacingFbView *v, const Jy60Sample *sample)
+{
+    if (v == NULL) {
+        return;
+    }
+
+    render_menu_background(v);
+    fb_draw_text_centered(v, WIN_WIDTH / 2, 24, "JY60 Test", 0xffffffu);
+    fb_draw_text_centered(v, WIN_WIDTH / 2, 48, "Btn1 / center returns to menu", 0xbfd1ffu);
+    fb_fill_rect_alpha(v, 14, 64, WIN_WIDTH - 15, WIN_HEIGHT - 46, 0x0d1730u, 220);
+    render_gyro_rows(v, sample);
+    fb_present(v);
 }

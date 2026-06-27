@@ -52,6 +52,21 @@ config EXAMPLES_RACING_BUTTON3_DEVPATH
 	---help---
 		Optional third physical button. If present, it maps to fly.
 
+config EXAMPLES_RACING_JY60_DEVPATH
+	string "JY60 UART device path"
+	default "/dev/uart1"
+	---help---
+		Serial device for the JY60 gyroscope. The default device path is
+		/dev/uart1. Confirm the actual UART1 pins from the board
+		pinmux/schematic before wiring.
+
+config EXAMPLES_RACING_JY60_BAUD
+	int "JY60 UART baud rate"
+	default 9600
+	---help---
+		Default JY60 serial baud rate. The parser expects the common
+		WitMotion/JY60 0x55 0x51/0x52/0x53 binary frames.
+
 config EXAMPLES_RACING_DATA_ROOT
 	string "Racing Data Root"
 	default "/data"

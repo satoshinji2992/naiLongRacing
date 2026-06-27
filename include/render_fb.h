@@ -2,6 +2,7 @@
 #define RACING_RENDER_FB_H
 
 #include "game.h"
+#include "jy60.h"
 
 /*
  * Framebuffer 直绘渲染层。
@@ -21,5 +22,11 @@ void racing_fb_delete(RacingFbView *view);
 
 /* 读取 game 状态画一帧（天空 + 路面 + 奶龙），并翻页/刷新到屏幕。 */
 void racing_fb_render(RacingFbView *view);
+
+/* 绘制启动主界面，点击进入原始/陀螺仪/test 模式。 */
+void racing_fb_render_menu(RacingFbView *view);
+
+/* 绘制 JY60 测试页，显示最近一次解析出的姿态/加速度/角速度。 */
+void racing_fb_render_gyro_test(RacingFbView *view, const Jy60Sample *sample);
 
 #endif

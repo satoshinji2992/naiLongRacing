@@ -13,6 +13,11 @@
 #define ROAD_WIDTH 2300
 #endif
 
+#ifndef RACING_MAP_COUNT
+/* 固定地图数量：0=环形 1=宽直道 2=Z/S交叉10次。 */
+#define RACING_MAP_COUNT 3
+#endif
+
 #ifndef SEG_LENGTH
 #define SEG_LENGTH 180
 #endif

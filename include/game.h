@@ -31,10 +31,12 @@ typedef struct Road {
 typedef struct Nailong {
     Point p[4];
     bool eaten;
+    int respawnMs;   /* 被吃后到重生前的倒计时；<=0 表示不重生或已就绪 */
 } Nailong;
 
 typedef enum RacingMode {
     RACING_MODE_START,
+    RACING_MODE_MAP_SELECT,   /* 关卡/地图选择界面 */
     RACING_MODE_PLAYING,
     RACING_MODE_PAUSED,
     RACING_MODE_WIN
@@ -50,6 +52,13 @@ typedef struct RacingInput {
     bool start;
     bool restart;
     bool pause;
+    bool map1;
+    bool map2;
+    bool map3;
+    bool mapSelect;   /* 开始界面 → 进入地图选择 */
+    bool back;        /* 地图选择 → 返回开始界面 */
+    bool cyclePrev;   /* 地图选择：上一张图 */
+    bool cycleNext;   /* 地图选择：下一张图 */
 } RacingInput;
 
 typedef struct RacingGame {
@@ -72,9 +81,15 @@ typedef struct RacingGame {
     bool turnRight;
     bool isOut;
     bool isFlying;
+    int mapIndex;
+    float roadWidth;
+    int collectibleRespawnMs;   /* 收集物被吃后多久重生(地图2 校徽刷新更快)；0=不重生 */
 } RacingGame;
 
 void racing_game_init(RacingGame *game, unsigned int seed);
+void racing_game_set_map(RacingGame *game, int mapIndex);
+const char *racing_game_map_name(int mapIndex);
+const char *racing_game_map_name_ascii(int mapIndex);
 void racing_game_reset_to_start(RacingGame *game);
 void racing_game_start(RacingGame *game);
 void racing_game_update(RacingGame *game, const RacingInput *input, int deltaMs);

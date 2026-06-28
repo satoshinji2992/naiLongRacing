@@ -66,6 +66,7 @@ vendor/allwinnertech/lichee/out/r528s3/velaevb1_nand/rtos_nuttx_r528s3-velaevb1_
 里确保:
 ```
 CONFIG_EXAMPLES_RACING=y
+CONFIG_R528_UART1=y          # JY60 默认使用 /dev/uart1
 ```
 本应用**不再依赖 LVGL**(`Kconfig` 已去掉 `depends on GRAPHICS_LVGL`)。
 
@@ -75,11 +76,17 @@ CONFIG_EXAMPLES_RACING=y
 | `EXAMPLES_RACING_FB_DEVPATH` | `/dev/fb0` | framebuffer 设备 |
 | `EXAMPLES_RACING_INPUT_DEVPATH` | `/dev/input0` | 触摸屏设备 |
 | `EXAMPLES_RACING_BUTTON1_DEVPATH` | `/dev/gpio1` | 按键1:start/pause |
-| `EXAMPLES_RACING_BUTTON2_DEVPATH` | `/dev/gpio3` | 按键2:boost |
+| `EXAMPLES_RACING_BUTTON2_DEVPATH` | `/dev/gpio3` | 按键2:boost(Original Mode) |
 | `EXAMPLES_RACING_BUTTON3_DEVPATH` | `/dev/gpio4` | 按键3:fly |
+| `EXAMPLES_RACING_JY60_DEVPATH` | `/dev/uart1` | JY60 串口设备 |
+| `EXAMPLES_RACING_JY60_BAUD` | `9600` | JY60 串口波特率 |
 | `EXAMPLES_RACING_DATA_ROOT` | `/data` | 贴图所在分区挂载点(即 `/data/res/racing`) |
 | `EXAMPLES_RACING_PRIORITY` | 100 | 任务优先级 |
 | `EXAMPLES_RACING_STACKSIZE` | 327680 | 任务栈 |
+
+JY60 接线前请以当前板级 pinmux/原理图为准确认 UART1 TX/RX 引脚;当前固件按
+PE10/PE11 的 function 3 配置 UART1,默认打开 `/dev/uart1`、`9600 8N1`,菜单里的 **Gyro Mode** 会用姿态控制左右转;
+Gyro Mode 下 boost 改为单点按住屏幕 0.1s 后触发,**Test Mode** 会直接显示解析到的 JY60 数据。
 
 改设备路径:
 ```bash
@@ -123,7 +130,8 @@ python3 tools/gen_font.py
 
 - **自动前进**(固定速度),只需转向 + 收集奶龙 + 躲避。
 - 触摸:**左半屏左转 / 右半屏右转 / 屏幕中央 = 开始·暂停**。
-- GPIO:按键1 = 开始/暂停,按键2 = boost(耗能加速),按键3 = fly(能量满起跳)。
+- Gyro Mode:单点按住屏幕 0.1s = boost(有能量时耗能加速)。
+- GPIO:按键1 = 开始/暂停,按键2 = Original Mode boost,按键3 = fly(能量满起跳)。
 - 吃奶龙 +100 能量并触发跳脸闪屏;跑完 3 圈显示成绩。
 
 ## 可调旋钮

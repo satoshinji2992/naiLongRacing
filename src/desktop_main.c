@@ -30,6 +30,12 @@ static RacingInput read_desktop_input(bool *running)
                 input.restart = true;
             } else if (event.key.keysym.scancode == SDL_SCANCODE_F) {
                 input.fly = true;
+            } else if (event.key.keysym.scancode == SDL_SCANCODE_1) {
+                input.map1 = true;
+            } else if (event.key.keysym.scancode == SDL_SCANCODE_2) {
+                input.map2 = true;
+            } else if (event.key.keysym.scancode == SDL_SCANCODE_3) {
+                input.map3 = true;
             }
         }
     }
@@ -96,7 +102,7 @@ int main(void)
     racing_game_init(&game, (unsigned int)SDL_GetTicks());
     lastTick = SDL_GetTicks();
 
-    printf("Racing SDL started. Enter starts or resumes, R restarts, W/A/S/D drive, Space boosts, Esc or P pauses.\n");
+    printf("Racing SDL started. 1/2/3 select map, Enter starts or resumes, R restarts, W/A/S/D drive, Space boosts, Esc or P pauses.\n");
 
     while (running) {
         /* 桌面版主循环：读输入、推进游戏状态、绘制，然后补足到目标帧率。 */

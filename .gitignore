@@ -19,3 +19,6 @@ Make.dep
 .codex
 *:Zone.Identifier
 .vscode/
+
+#文档
+docs/

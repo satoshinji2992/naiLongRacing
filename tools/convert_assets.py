@@ -31,6 +31,9 @@ TARGETS = [
     ("mountain_far.png",  640, 240, "mountain_far.raw"),
     ("mountain_near.png", 640, 240, "mountain_near.raw"),
     ("cloud_layer.png",   640, 240, "cloud.raw"),
+    # 地图“一路邮你”：北邮校徽收集物（方形）+ 北邮校门背景（全屏）
+    ("nailong_bupt.png",  160, 160, "nailong_bupt.raw"),
+    ("bg_bupt.jpg",       480, 320, "bg_bupt.raw"),
 ]
 
 

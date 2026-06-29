@@ -96,6 +96,11 @@ static RacingMenuSelection menu_selection_from_point(int x, int y)
         x2 = WIN_WIDTH - 20;
     }
 
+    /* 顶部区域(模式按钮上方)触摸 = 循环切换地图。 */
+    if (y < y1) {
+        return RACING_MENU_MAP_CYCLE;
+    }
+
     if (x < x1 || x > x2) {
         return RACING_MENU_NONE;
     }

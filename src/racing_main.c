@@ -179,6 +179,15 @@ int main(int argc, FAR char *argv[])
               racing_input_reset();
               printf("[RACING] Test mode selected.\n");
             }
+          else if (menu_selection == RACING_MENU_MAP_CYCLE)
+            {
+              /* 触摸菜单顶部：循环切换地图（环形 → 一路邮你 → Z/S → 环形）。 */
+              int next_map = (game.mapIndex + 1) % RACING_MAP_COUNT;
+              racing_game_set_map(&game, next_map);
+              racing_input_reset();
+              printf("[RACING] map -> %d (%s)\n", next_map,
+                     racing_game_map_name_ascii(next_map));
+            }
 
           racing_fb_render_menu(view);
         }

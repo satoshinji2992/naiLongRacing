@@ -7,7 +7,8 @@ typedef enum RacingMenuSelection {
     RACING_MENU_NONE = 0,
     RACING_MENU_ORIGINAL,
     RACING_MENU_GYRO,
-    RACING_MENU_TEST
+    RACING_MENU_TEST,
+    RACING_MENU_MAP_CYCLE   /* 触摸菜单顶部 = 循环切换地图 */
 } RacingMenuSelection;
 
 /* 初始化触摸(/dev/input0)与 GPIO 按键。 */

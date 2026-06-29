@@ -71,78 +71,98 @@ static Road make_road(float x, float y, float z)
 /* 赛道是预先生成好的离散段，曲线和起伏都固定在这张表里。 */
 /* 横向偏移 x 由每段 curve 累加得到，最后统一 *45 缩放成世界坐标。 */
 
-/* 地图0 环形：整条赛道走 2 圈连续正弦，平滑大弯且首尾相接成闭环。 */
-static void build_track_ring(Road roads[ROAD_COUNT])
+/* 局部确定性 LCG：只用于生成蜿蜒赛道的随机段长/振幅。不碰全局 rand()，
+ * 这样奶龙位置仍按启动时刻种子随机，而每张地图的赛道形状固定、可复现。 */
+static float track_rand(unsigned int *state)
 {
-    const float two_pi = 6.2831853f;
-    const float amp = 0.6f;
-    const int loops = 2;
-    float x = 0.0f;
-
-    for (int i = 0; i < ROAD_COUNT; i++)
-    {
-        x += amp * sinf(two_pi * loops * (float)i / (float)ROAD_COUNT);
-        roads[i] = make_road(x * 45.0f, 0.0f, (float)((1 + i) * SEG_LENGTH));
-    }
+    *state = (*state * 1664525u + 1013904223u);
+    return (float)((*state >> 8) & 0xFFFFu) / (float)0x10000u;   /* 0..1 */
 }
 
-/* 地图1 宽直道：curve 恒为 0，纯平直路；路面宽度在 set_map 里调宽。 */
-static void build_track_straight(Road roads[ROAD_COUNT])
+/* 每张地图的生成参数。secLen 区间决定弯道疏密，curveAmp 区间决定弯道急缓，
+ * hill* 决定上下坡幅度/频率，widthScale 决定路面宽度，seed 让形状固定。 */
+typedef struct
 {
-    for (int i = 0; i < ROAD_COUNT; i++)
-    {
-        roads[i] = make_road(0.0f, 0.0f, (float)((1 + i) * SEG_LENGTH));
-    }
-}
+    int   secLenMin;
+    int   secLenMax;
+    float curveAmpMin;
+    float curveAmpMax;
+    float hillAmp;
+    float hillFreq;
+    float widthScale;
+    unsigned int seed;
+} TrackParams;
 
-/* 地图2 Z/S 交叉10次：20 段交替。每段用一个完整正弦周期驱动 curve
- * （恒定 curve 会让 x、z 同比线性增长，投影成直线看不出弯；正弦 curve 使
- * x 超线性增长，路面才显出弯）。Z 段振幅大=急弯，S 段振幅小=缓弯；完整
- * 周期净偏移为零，赛道不会整体漂走。 */
-static void build_track_zigzag(Road roads[ROAD_COUNT])
+/* 三条赛道由易到难：越难段越短（弯更密）、振幅越大（弯更急）、上下坡更陡
+ * 更高、路更窄。widthScale 同时被 racing_game_set_map 用来设置 roadWidth。 */
+static const TrackParams g_track_params[RACING_MAP_COUNT] =
 {
-    const int sections = 20;          /* 10 段 Z + 10 段 S */
-    const int secLen = ROAD_COUNT / sections;
+    { 110, 170, 0.5f, 1.1f, 1300.0f, 4.0f, 1.3f, 11111u },  /* 简单：缓弯缓坡宽路 */
+    { 80,  140, 0.9f, 2.0f, 1800.0f, 6.0f, 1.0f, 22222u },  /* 中等：中弯中坡 */
+    { 68,  120, 1.1f, 2.4f, 1900.0f, 7.0f, 0.82f, 33333u }, /* 困难：急弯陡坡窄路(已下调) */
+};
+
+/* 分段蜿蜒：把整条路切成若干随机长度的段，每段内 curve 走一个完整正弦周期
+ * （净漂移为 0，赛道不会整体飘走），但段长与振幅/方向都是随机的，所以弯道
+ * 疏密、急缓全不规则，像真实赛道而非单一正弦。上下坡用 3 层不同频率/相位的
+ * 正弦叠加（频率比 1:2.3:4.7 不可约），起伏自然、非单一正弦。 */
+static void build_track_winding(Road roads[ROAD_COUNT], const TrackParams *p)
+{
     const float two_pi = 6.2831853f;
+    unsigned int state = p->seed;
     float x = 0.0f;
+    int i = 0;
 
-    for (int i = 0; i < ROAD_COUNT; i++)
+    while (i < ROAD_COUNT)
     {
-        int section = i / secLen;
-        float t = (float)(i % secLen) / (float)secLen;   /* 段内 0..1 */
-        float curve;
+        int secLen;
+        float sign;
+        float amp;
+        int j;
 
-        if (section % 2 == 0)
+        secLen = p->secLenMin + (int)(track_rand(&state) *
+                    (float)(p->secLenMax - p->secLenMin + 1));
+        if (secLen < 1)
         {
-            /* Z 形：大振幅完整正弦周期，先急转再回拐。 */
-            curve = 2.5f * sinf(two_pi * t);
+            secLen = 1;
         }
-        else
+        if (i + secLen > ROAD_COUNT)
         {
-            /* S 形：小振幅完整正弦周期，平滑缓弯。 */
-            curve = 1.0f * sinf(two_pi * t);
+            secLen = ROAD_COUNT - i;
         }
 
-        x += curve;
-        roads[i] = make_road(x * 45.0f, 0.0f, (float)((1 + i) * SEG_LENGTH));
+        sign = (track_rand(&state) < 0.5f) ? -1.0f : 1.0f;
+        amp = (p->curveAmpMin + track_rand(&state) *
+                (p->curveAmpMax - p->curveAmpMin)) * sign;
+
+        for (j = 0; j < secLen; j++)
+        {
+            float t;
+            float curve;
+            int idx;
+            float zi;
+            float hill;
+
+            t = (float)j / (float)secLen;            /* 段内 0..1 */
+            curve = amp * sinf(two_pi * t);          /* 完整周期 -> 净漂移 0 */
+            x += curve;
+
+            idx = i + j;
+            zi = (float)((1 + idx) * SEG_LENGTH);
+            hill = p->hillAmp *
+                (0.85f * sinf(two_pi * p->hillFreq * (float)idx / (float)ROAD_COUNT + 0.7f) +
+                 0.15f * sinf(two_pi * p->hillFreq * 2.0f * (float)idx / (float)ROAD_COUNT + 2.1f));
+            roads[idx] = make_road(x * 45.0f, hill, zi);
+        }
+
+        i += secLen;
     }
 }
 
 static void build_track(Road roads[ROAD_COUNT], int mapIndex)
 {
-    switch (mapIndex)
-    {
-    case 1:
-        build_track_straight(roads);
-        break;
-    case 2:
-        build_track_zigzag(roads);
-        break;
-    case 0:
-    default:
-        build_track_ring(roads);
-        break;
-    }
+    int idx = (mapIndex < 0 || mapIndex >= RACING_MAP_COUNT) ? 0 : mapIndex;
+    build_track_winding(roads, &g_track_params[idx]);
 }
 
 /* 奶龙本体先用四个角定义，渲染端再按投影结果画成矩形。 */
@@ -260,8 +280,7 @@ static void refresh_camera_height(RacingGame *game)
 }
 
 /* 奶龙被吃到后补能量，并触发短暂跳脸反馈。
- * 地图“一路邮你”collectibleRespawnMs 较小：校徽被吃后很快在前方重生，
- * 刷新频率更高。其它地图 respawnMs=0，不重生（维持一局 N 个）。 */
+ * collectibleRespawnMs=0：被吃后不重生，维持一局固定 N 个。 */
 static void update_collectibles(RacingGame *game, int deltaMs)
 {
     int startSeg = racing_game_start_segment(game);
@@ -351,6 +370,7 @@ static void update_movement(RacingGame *game, const RacingInput *input)
     forwardCos = cosf(-game->angle);
     forwardSin = sinf(-game->angle);
 
+    game->boosting = false;
     if (!game->isFlying)
     {
         if (input->accelerate)
@@ -369,6 +389,7 @@ static void update_movement(RacingGame *game, const RacingInput *input)
                 game->camX += (int)(boostSpeed * forwardSin);
                 game->distance += game->isOut ? 0.0f : 0.4f;
                 game->energy -= game->isOut ? 1 : 2;
+                game->boosting = true;
             }
         }
 
@@ -422,7 +443,8 @@ void racing_game_init(RacingGame *game, unsigned int seed)
 
     srand(seed);
     game->mapIndex = 0;
-    game->roadWidth = (float)ROAD_WIDTH;
+    game->menuControlMode = 0;
+    game->roadWidth = (float)ROAD_WIDTH * g_track_params[0].widthScale;
     game->collectibleRespawnMs = 0;
     build_track(game->roads, game->mapIndex);
     reset_runtime_state(game);
@@ -443,9 +465,9 @@ void racing_game_set_map(RacingGame *game, int mapIndex)
     }
 
     game->mapIndex = mapIndex;
-    /* 地图1（一路邮你）路面更宽 + 校徽被吃后 1.2s 在前方重生（刷新更快）；其余默认。 */
-    game->roadWidth = (mapIndex == 1) ? (float)ROAD_WIDTH * 1.8f : (float)ROAD_WIDTH;
-    game->collectibleRespawnMs = (mapIndex == 1) ? 1200 : 0;
+    /* 路宽按难度缩放：越难越窄（简单 1.3x / 中等 1.0x / 困难 0.7x）。 */
+    game->roadWidth = (float)ROAD_WIDTH * g_track_params[mapIndex].widthScale;
+    game->collectibleRespawnMs = 0;
     build_track(game->roads, mapIndex);
     reset_runtime_state(game);
     reset_collectibles(game->collectibles, game->roads, game->collectiblePositions, game->roadWidth);
@@ -456,12 +478,12 @@ const char *racing_game_map_name(int mapIndex)
     switch (mapIndex)
     {
     case 1:
-        return "一路邮你";
+        return "中等";
     case 2:
-        return "Z/S x10";
+        return "困难";
     case 0:
     default:
-        return "Ring";
+        return "简单";
     }
 }
 
@@ -471,12 +493,12 @@ const char *racing_game_map_name_ascii(int mapIndex)
     switch (mapIndex)
     {
     case 1:
-        return "BUPT";
+        return "Medium";
     case 2:
-        return "Z/S x10";
+        return "Hard";
     case 0:
     default:
-        return "Ring";
+        return "Easy";
     }
 }
 
@@ -523,6 +545,14 @@ void racing_game_update(RacingGame *game, const RacingInput *input, int deltaMs)
         return;
     }
 
+    /* 暂停 / 胜利界面：返回主菜单(停在开始页,不开新局)。 */
+    if (localInput.toMenu &&
+        (game->mode == RACING_MODE_PAUSED || game->mode == RACING_MODE_WIN))
+    {
+        racing_game_reset_to_start(game);
+        return;
+    }
+
     /* 1/2/3 任意时刻都可换图（切到不同的图才动作）。
      * 开始页切换→停在开始页；游戏中切换→直接从新图起点继续跑。 */
     if (localInput.map1 || localInput.map2 || localInput.map3)
@@ -548,6 +578,32 @@ void racing_game_update(RacingGame *game, const RacingInput *input, int deltaMs)
     if (localInput.mapSelect && game->mode == RACING_MODE_START)
     {
         game->mode = RACING_MODE_MAP_SELECT;
+        return;
+    }
+
+    /* 开始界面 → 进入操作选择界面。 */
+    if (localInput.controlSelect && game->mode == RACING_MODE_START)
+    {
+        game->mode = RACING_MODE_CONTROL_SELECT;
+        return;
+    }
+
+    /* 操作选择界面：左右切换操控方式(Original/Gyro/Test)，Enter 确认;选 Test 直接进测试屏,
+     * 选 Original/Gyro 返回主菜单(设为发车用模式)。Esc 返回。 */
+    if (game->mode == RACING_MODE_CONTROL_SELECT)
+    {
+        if (localInput.cyclePrev || localInput.cycleNext)
+        {
+            game->menuControlMode = localInput.cycleNext
+                             ? (game->menuControlMode + 1) % 3
+                             : (game->menuControlMode + 2) % 3;
+            return;
+        }
+        if (localInput.start || localInput.back || localInput.pause)
+        {
+            game->mode = RACING_MODE_START;
+            return;
+        }
         return;
     }
 

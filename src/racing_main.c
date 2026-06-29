@@ -131,8 +131,6 @@ int main(int argc, FAR char *argv[])
       long elapsed;
       long remain;
       RacingInput input;
-      RacingMenuSelection menu_selection;
-      bool touch_boost;
 
       now = monotonic_ms();
       delta = now - last_ms;
@@ -146,50 +144,68 @@ int main(int argc, FAR char *argv[])
           delta = 100;
         }
 
+      /* 菜单屏:按当前 game.mode 映射触摸;游戏/暂停传 -1(驾驶按模式驱动)。
+       * 不能传 0:RACING_MODE_START==0,会和主菜单冲突导致游戏中触摸失效。 */
+      racing_input_set_menu_screen(app_mode == RACING_APP_MENU ? game.mode : -1);
+      racing_input_set_drive_mode(app_mode == RACING_APP_GYRO);
       racing_input_poll();
       jy60_poll();
       jy60_get_sample(&jy60_sample);
       input = racing_input_get();
-      menu_selection = racing_input_get_menu_selection();
-      touch_boost = racing_input_get_touch_boost();
 
       if (app_mode == RACING_APP_MENU)
         {
-          if (menu_selection == RACING_MENU_ORIGINAL)
+          /* 主菜单按"返回"(按键②) -> 退出赛车,回 NSH(替代 Ctrl-C)。 */
+          if (game.mode == RACING_MODE_START && input.back)
             {
-              app_mode = RACING_APP_ORIGINAL;
-              racing_game_start(&game);
-              racing_input_reset();
-              printf("[RACING] Original mode selected.\n");
+              g_should_exit = 1;
+              printf("[RACING] quit to NSH (main-menu back).\n");
             }
-          else if (menu_selection == RACING_MENU_GYRO)
+          /* 操作选择:点哪个按钮选哪个(ctrl1/2/3 由触摸按 y 给出)。 */
+          else if (game.mode == RACING_MODE_CONTROL_SELECT && input.ctrl1)
             {
-              app_mode = RACING_APP_GYRO;
-              racing_game_start(&game);
-              jy60_control_calibrate(&jy60_control, &jy60_sample);
+              game.menuControlMode = 0;
+              game.mode = RACING_MODE_START;
               racing_input_reset();
-              printf("[RACING] Gyro mode selected. Calibration valid=%d "
-                     "roll=%.2f pitch=%.2f yaw=%.2f\n",
-                     (int)jy60_control.ready, jy60_control.roll_zero,
-                     jy60_control.pitch_zero, jy60_control.yaw_zero);
+              printf("[RACING] control -> Original.\n");
             }
-          else if (menu_selection == RACING_MENU_TEST)
+          else if (game.mode == RACING_MODE_CONTROL_SELECT && input.ctrl2)
             {
+              game.menuControlMode = 1;
+              game.mode = RACING_MODE_START;
+              racing_input_reset();
+              printf("[RACING] control -> Gyro.\n");
+            }
+          else if (game.mode == RACING_MODE_CONTROL_SELECT && input.ctrl3)
+            {
+              game.menuControlMode = 2;
               app_mode = RACING_APP_TEST;
+              game.mode = RACING_MODE_START;
               racing_input_reset();
-              printf("[RACING] Test mode selected.\n");
+              printf("[RACING] Test mode (from control select).\n");
             }
-          else if (menu_selection == RACING_MENU_MAP_CYCLE)
+          else
             {
-              /* 触摸菜单顶部：循环切换地图（环形 → 一路邮你 → Z/S → 环形）。 */
-              int next_map = (game.mapIndex + 1) % RACING_MAP_COUNT;
-              racing_game_set_map(&game, next_map);
-              racing_input_reset();
-              printf("[RACING] map -> %d (%s)\n", next_map,
-                     racing_game_map_name_ascii(next_map));
+              racing_game_update(&game, &input, (int)delta);
+              if (game.mode == RACING_MODE_PLAYING)
+                {
+                  /* 主菜单快捷开始或关卡选择里按开始 -> 用当前操作模式发车。 */
+                  app_mode = (game.menuControlMode == 1) ? RACING_APP_GYRO
+                                                          : RACING_APP_ORIGINAL;
+                  if (app_mode == RACING_APP_GYRO)
+                    {
+                      jy60_control_calibrate(&jy60_control, &jy60_sample);
+                    }
+                  racing_input_reset();
+                  printf("[RACING] start %s mode, map %d (%s).\n",
+                         app_mode == RACING_APP_GYRO ? "Gyro" : "Original",
+                         game.mapIndex, racing_game_map_name_ascii(game.mapIndex));
+                }
+              else
+                {
+                  racing_fb_render_menu(view);
+                }
             }
-
-          racing_fb_render_menu(view);
         }
       else if (app_mode == RACING_APP_TEST)
         {
@@ -206,7 +222,9 @@ int main(int argc, FAR char *argv[])
         }
       else
         {
-          input.accelerate = true;   /* 固定速度自动前进(删前进/后退键) */
+          /* 车始终自动前进;转向靠触摸(普通)或 JY60(体感);
+           * boost 靠触摸按模式驱动(已由 input 层填好 input.boost)。 */
+          input.accelerate = true;
           input.brake = false;
 
           if (app_mode == RACING_APP_GYRO)
@@ -219,11 +237,20 @@ int main(int argc, FAR char *argv[])
                          jy60_control.yaw_zero);
                 }
               jy60_apply_control(&jy60_control, &jy60_sample, &input);
-              input.boost = touch_boost && game.energy > 0;
             }
 
           racing_game_update(&game, &input, (int)delta);
-          racing_fb_render(view);
+          if (game.mode == RACING_MODE_START)
+            {
+              /* 暂停/胜利界面选"回主菜单" -> 回主菜单。 */
+              app_mode = RACING_APP_MENU;
+              racing_input_reset();
+              printf("[RACING] Back to menu.\n");
+            }
+          else
+            {
+              racing_fb_render(view);
+            }
         }
 
       /* 每秒打印一次:帧率、平均帧耗时、游戏状态、上一帧输入轴。

@@ -39,7 +39,8 @@ typedef struct {
 
 /* 场景使用的几种颜色（RGB888）。 */
 #define COL_SKY      0x5fb8e8u
-#define COL_GRASS    0x00c700u
+#define COL_GRASS       0x00c700u   /* 默认草地(绿);地图2(bg_bupt)用深灰 */
+#define COL_GRASS_DARK  0x2e3338u   /* 地图2(bg_bupt)草地:深灰 */
 #define COL_ROAD_DK  0x696969u
 #define COL_ROAD_LT  0x656565u
 #define COL_POLE     0xeb2d18u
@@ -571,8 +572,10 @@ static void draw_ground_band(RacingFbView *v, const Road *farRoad, const Road *n
     FbPoint nearRightOuter = {(float)WIN_WIDTH, nearRoad->Y + nearRoad->W * sinBank};
     FbPoint nearRightInner = {nearRoad->X + nearRoad->W * cosBank, nearRoad->Y + nearRoad->W * sinBank};
 
-    fb_fill_quad(v, farLeftOuter, farLeftInner, nearLeftInner, nearLeftOuter, COL_GRASS);
-    fb_fill_quad(v, farRightInner, farRightOuter, nearRightOuter, nearRightInner, COL_GRASS);
+    /* 地图2(bg_bupt)用深灰草地,其余地图用绿色。 */
+    uint32_t grass = (v->game->mapIndex == 1) ? COL_GRASS_DARK : COL_GRASS;
+    fb_fill_quad(v, farLeftOuter, farLeftInner, nearLeftInner, nearLeftOuter, grass);
+    fb_fill_quad(v, farRightInner, farRightOuter, nearRightOuter, nearRightInner, grass);
 }
 
 /* 路面/路肩：透视梯形(对齐 SDL draw_trapezoid)。用矩形会在转向时因 sinBank
@@ -973,95 +976,223 @@ static void render_mode_overlay(RacingFbView *v)
         fb_draw_text_centered(v, WIN_WIDTH / 2, py + 96, "Btn1 start / pause", hint);
     } else if (g->mode == RACING_MODE_PAUSED) {
         fb_draw_text_centered(v, WIN_WIDTH / 2, py + 24, "Paused", title);
-        fb_draw_text_centered(v, WIN_WIDTH / 2, py + 70, "Tap center to resume", body);
-        fb_draw_text_centered(v, WIN_WIDTH / 2, py + 96, "Btn1 resume", hint);
+        fb_draw_text_centered(v, WIN_WIDTH / 2, py + 64, "center: resume", body);
+        fb_draw_text_centered(v, WIN_WIDTH / 2, py + 86, "top: main menu", 0xffd23cu);
+        fb_draw_text_centered(v, WIN_WIDTH / 2, py + 104, "Btn1 resume", hint);
     } else if (g->mode == RACING_MODE_WIN) {
         snprintf(buf, sizeof(buf), "Finish in %ds", g->finalSeconds);
         fb_draw_text_centered(v, WIN_WIDTH / 2, py + 24, buf, title);
-        fb_draw_text_centered(v, WIN_WIDTH / 2, py + 70, "Tap center to restart", body);
-        fb_draw_text_centered(v, WIN_WIDTH / 2, py + 96, "Btn1 restart", hint);
+        fb_draw_text_centered(v, WIN_WIDTH / 2, py + 64, "center: restart", body);
+        fb_draw_text_centered(v, WIN_WIDTH / 2, py + 86, "top: main menu", 0xffd23cu);
+        fb_draw_text_centered(v, WIN_WIDTH / 2, py + 104, "Btn1 restart", hint);
     }
 }
 
-/* 左上角缩略图：把整条赛道（横向偏移 x 沿赛道展开）画成绿线，
- * 红点标当前 camZ 在赛道上的位置。只在 PLAYING/PAUSED 画，约屏幕 1/4×1/4。 */
+/* 俯视 2D 赛道。两种用法:
+ *  - 选图预览(show_pos=0):整条赛道斜放,起点左下、终点右上,看整图形状。
+ *  - 游戏小地图(show_pos=1):以当前 camZ 为中心的局部滚动窗口——前方多看、
+ *    后方少看,路面随前进向上滚动,黄点标车当前位置。路宽按 roadWidth 放大
+ *    画成一条带(越难越窄)。 */
+static void render_track_topdown(RacingFbView *v, const RacingGame *g,
+                                 int x0, int y0, int w, int h, int show_pos)
+{
+    enum { STEP = 10 };
+    int bandHalf;     /* 路面半宽(px) */
+
+    /* 路宽放大:按当前 roadWidth / ROAD_WIDTH 缩放,越难越窄。 */
+    bandHalf = (int)(g->roadWidth / (float)ROAD_WIDTH * 6.0f + 0.5f);
+    if (bandHalf < 2) {
+        bandHalf = 2;
+    }
+    if (bandHalf > 8) {
+        bandHalf = 8;
+    }
+
+    if (!show_pos) {
+        /* ---- 整图斜放预览(菜单选图):起点左下 → 终点右上 ---- */
+        float xmin = 1e30f;
+        float xmax = -1e30f;
+        float xmid;
+        float half;
+        int inset;
+        float sx, sy, fx, fy;
+        float dxs, dys, dlen, dnx, dny, pnx, pny, lat;
+        FbPoint prevL, prevR;
+        int havePrev = 0;
+        int n;
+        int k;
+
+        for (int i = 0; i < ROAD_COUNT; i++) {
+            if (g->roads[i].x < xmin) {
+                xmin = g->roads[i].x;
+            }
+            if (g->roads[i].x > xmax) {
+                xmax = g->roads[i].x;
+            }
+        }
+        xmid = (xmin + xmax) * 0.5f;
+        half = (xmax - xmin) * 0.5f;
+        if (half < 1.0f) {
+            half = 1.0f;
+        }
+
+        inset = (w < h ? w : h) / 8 + 2;
+        sx = (float)(x0 + inset);
+        sy = (float)(y0 + h - inset);
+        fx = (float)(x0 + w - inset);
+        fy = (float)(y0 + inset);
+        dxs = fx - sx;
+        dys = fy - sy;
+        dlen = sqrtf(dxs * dxs + dys * dys);
+        if (dlen < 1.0f) {
+            dlen = 1.0f;
+        }
+        dnx = dxs / dlen;
+        dny = dys / dlen;
+        pnx = -dny;
+        pny = dnx;
+        lat = (w < h ? w : h) * 0.16f;
+
+        n = (ROAD_COUNT - 1) / STEP;
+        for (k = 0; k <= n; k++) {
+            int idx = k * STEP;
+            float u;
+            float vv;
+            float bx;
+            float by;
+            float cx;
+            float cy;
+            FbPoint pl;
+            FbPoint pr;
+
+            if (idx > ROAD_COUNT - 1) {
+                idx = ROAD_COUNT - 1;
+            }
+            u = (float)idx / (float)(ROAD_COUNT - 1);
+            vv = (g->roads[idx].x - xmid) / half;
+            if (vv < -1.0f) {
+                vv = -1.0f;
+            }
+            if (vv > 1.0f) {
+                vv = 1.0f;
+            }
+            bx = sx + u * dxs;
+            by = sy + u * dys;
+            cx = bx + vv * lat * pnx;
+            cy = by + vv * lat * pny;
+            pl.x = cx - bandHalf * pnx;
+            pl.y = cy - bandHalf * pny;
+            pr.x = cx + bandHalf * pnx;
+            pr.y = cy + bandHalf * pny;
+            if (havePrev) {
+                fb_fill_quad(v, prevR, pr, pl, prevL, 0x4b6fd6u);
+            }
+            prevL = pl;
+            prevR = pr;
+            havePrev = 1;
+        }
+
+        fb_fill_rect(v, (int)sx - 2, (int)sy - 2, (int)sx + 2, (int)sy + 2, 0x33c24du);
+        fb_fill_rect(v, (int)fx - 2, (int)fy - 2, (int)fx + 2, (int)fy + 2, 0xe0413cu);
+        return;
+    }
+
+    /* ---- 局部滚动小地图(游戏中):以 camZ 为中心,前方/后方一段 ---- */
+    {
+        enum { AHEAD = 60, BEHIND = 12, WIN = AHEAD + BEHIND + 1, LSTEP = 2 };
+        int seg0 = (int)(g->camZ / SEG_LENGTH);
+        int cx = x0 + w / 2;
+        int m = (w < h ? w : h) / 10 + 2;
+        int yCur = y0 + (int)(h * 0.72f);
+        int topY = y0 + m;
+        int botY = y0 + h - m;
+        float vsA = (float)(yCur - topY) / (float)AHEAD;
+        float vsB = (float)(botY - yCur) / (float)BEHIND;
+        float vs = (vsA < vsB ? vsA : vsB);
+        float halfw = (float)(w / 2 - m);
+        float xs[WIN];
+        float xmin = 1e30f;
+        float xmax = -1e30f;
+        float xmid;
+        float half;
+        FbPoint prevL, prevR;
+        int havePrev = 0;
+        int d;
+
+        if (seg0 < 0) {
+            seg0 = 0;
+        }
+        if (seg0 >= ROAD_COUNT) {
+            seg0 = ROAD_COUNT - 1;
+        }
+
+        /* 先扫一遍窗口,求横向范围以自适应铺满宽度。 */
+        for (d = 0; d < WIN; d++) {
+            int seg = ((seg0 - BEHIND + d) % ROAD_COUNT + ROAD_COUNT) % ROAD_COUNT;
+            xs[d] = g->roads[seg].x;
+            if (xs[d] < xmin) {
+                xmin = xs[d];
+            }
+            if (xs[d] > xmax) {
+                xmax = xs[d];
+            }
+        }
+        xmid = (xmin + xmax) * 0.5f;
+        half = (xmax - xmin) * 0.5f;
+        if (half < 1.0f) {
+            half = 1.0f;
+        }
+
+        /* 路带:横向 x→屏幕水平,段偏移 dd→垂直(前方在上)。 */
+        for (d = 0; d < WIN; d += LSTEP) {
+            int seg = ((seg0 - BEHIND + d) % ROAD_COUNT + ROAD_COUNT) % ROAD_COUNT;
+            float vv = (g->roads[seg].x - xmid) / half;
+            float bx = (float)cx + vv * halfw;
+            int dd = d - BEHIND;            /* 负=后方,正=前方 */
+            float by = (float)yCur - dd * vs;
+            FbPoint pl;
+            FbPoint pr;
+
+            pl.x = bx - bandHalf;
+            pl.y = by;
+            pr.x = bx + bandHalf;
+            pr.y = by;
+            if (havePrev) {
+                fb_fill_quad(v, prevL, pl, pr, prevR, 0x4b6fd6u);
+            }
+            prevL = pl;
+            prevR = pr;
+            havePrev = 1;
+        }
+
+        /* 当前位置黄点(dd=0,即 yCur 处)。 */
+        {
+            int seg = seg0 % ROAD_COUNT;
+            float vv = (g->roads[seg].x - xmid) / half;
+            float bx = (float)cx + vv * halfw;
+            fb_fill_rect(v, (int)bx - 2, yCur - 2, (int)bx + 2, yCur + 2, 0xffd23cu);
+        }
+    }
+}
+
+/* 左上角缩略图:环形俯视地图 + 红点(当前位置)。只在 PLAYING/PAUSED 画,约 1/4×1/4。 */
 static void render_minimap(RacingFbView *v)
 {
     const RacingGame *g = v->game;
-    enum { W = WIN_WIDTH / 4, H = WIN_HEIGHT / 4, X0 = 4, Y0 = 4, PAD = 6, STEP = 8 };
-    float xmin = 1e30f;
-    float xmax = -1e30f;
-    float xmid;
-    float half;
+    enum { W = WIN_WIDTH / 4, H = WIN_HEIGHT / 4, X0 = 4, Y0 = 4 };
 
     if (g->mode != RACING_MODE_PLAYING && g->mode != RACING_MODE_PAUSED) {
         return;
     }
 
-    for (int i = 0; i < ROAD_COUNT; i++) {
-        float xv = g->roads[i].x;
-        if (xv < xmin) {
-            xmin = xv;
-        }
-        if (xv > xmax) {
-            xmax = xv;
-        }
-    }
-    xmid = (xmin + xmax) * 0.5f;
-    half = (xmax - xmin) * 0.5f;
-    if (half < 1.0f) {
-        half = 1.0f;   /* 直道：画成水平直线 */
-    }
-
-    /* 半透明底板 + 边框（inclusive 坐标）。 */
+    /* 半透明底板 + 边框(inclusive 坐标)。 */
     fb_fill_rect_alpha(v, X0, Y0, X0 + W - 1, Y0 + H - 1, 0x0d1730u, 170);
     fb_fill_rect(v, X0, Y0, X0 + W - 1, Y0, 0x7f97c7u);
     fb_fill_rect(v, X0, Y0 + H - 1, X0 + W - 1, Y0 + H - 1, 0x7f97c7u);
     fb_fill_rect(v, X0, Y0, X0, Y0 + H - 1, 0x7f97c7u);
     fb_fill_rect(v, X0 + W - 1, Y0, X0 + W - 1, Y0 + H - 1, 0x7f97c7u);
 
-    /* 赛道轮廓：每 STEP 段采样，画成 2px 绿点串（点足够密，视觉上连成线）。 */
-    for (int i = 0; i < ROAD_COUNT; i += STEP) {
-        float t = (float)i / (float)(ROAD_COUNT - 1);
-        float norm = (g->roads[i].x - xmid) / half;
-        int px;
-        int py;
-        if (norm < -1.0f) {
-            norm = -1.0f;
-        }
-        if (norm > 1.0f) {
-            norm = 1.0f;
-        }
-        px = X0 + PAD + (int)(t * (W - 2 * PAD));
-        py = Y0 + H / 2 + (int)(norm * (H / 2 - PAD));
-        fb_fill_rect(v, px, py, px + 1, py + 1, 0x78e68cu);
-    }
-
-    /* 当前位置红点。 */
-    {
-        float prog = (float)g->camZ / (float)TRACK_LENGTH;
-        int seg;
-        int dx;
-        int dy;
-        float norm;
-        if (prog < 0.0f) {
-            prog = 0.0f;
-        }
-        if (prog > 1.0f) {
-            prog = 1.0f;
-        }
-        seg = (int)(prog * (ROAD_COUNT - 1));
-        norm = (g->roads[seg].x - xmid) / half;
-        if (norm < -1.0f) {
-            norm = -1.0f;
-        }
-        if (norm > 1.0f) {
-            norm = 1.0f;
-        }
-        dx = X0 + PAD + (int)(prog * (W - 2 * PAD));
-        dy = Y0 + H / 2 + (int)(norm * (H / 2 - PAD));
-        fb_fill_rect(v, dx - 2, dy - 2, dx + 2, dy + 2, 0xff3c3cu);
-    }
+    render_track_topdown(v, g, X0, Y0, W, H, 1);
 }
 
 /* 文字 HUD：圈数(红)、时间(青)、能量条、胜利成绩(黄)，左上角缩略图，以及模式面板。 */
@@ -1076,6 +1207,9 @@ static void render_hud(RacingFbView *v)
     snprintf(buf, sizeof(buf), "%ds", g->elapsedMs / 1000);
     fb_draw_text_centered(v, WIN_WIDTH / 2, 26, buf, 0x00ffffu);
     render_energy(v, g->energy);
+    if (g->boosting) {
+        fb_draw_text_centered(v, WIN_WIDTH - 48, 6, "BOOST", 0xff8800u);
+    }
     if (g->mode == RACING_MODE_WIN) {
         snprintf(buf, sizeof(buf), "Win %ds", g->finalSeconds);
         fb_draw_text_centered(v, WIN_WIDTH / 2, 46, buf, 0xffd647u);
@@ -1094,6 +1228,25 @@ static void render_button(RacingFbView *v, int x, int y, int w, int h,
     fb_fill_rect(v, x + w - 1, y, x + w - 1, y + h - 1, color);
     fb_draw_text_centered(v, x + w / 2, y + 10, title, 0xffffffu);
     fb_draw_text_centered(v, x + w / 2, y + 32, hint, 0xbfd1ffu);
+}
+
+/* 难度指示:三格方块,填充数 = 难度(简单 1 / 中等 2 / 困难 3),颜色随难度。 */
+static void draw_difficulty_fb(RacingFbView *v, int cx, int cy, int mapIndex)
+{
+    const int n = 3;
+    const int sz = 12;
+    const int gap = 8;
+    const uint32_t col[3] = {0x50c870u, 0xf0c846u, 0xe65a50u};
+    int totalW = n * sz + (n - 1) * gap;
+    int x0 = cx - totalW / 2;
+    int filled = mapIndex + 1;
+    int i;
+    for (i = 0; i < n; i++)
+    {
+        uint32_t c = (i < filled) ? col[mapIndex] : 0x46506eu;
+        int sx = x0 + i * (sz + gap);
+        fb_fill_rect(v, sx, cy, sx + sz - 1, cy + sz - 1, c);
+    }
 }
 
 static void render_menu_background(RacingFbView *v)
@@ -1289,36 +1442,78 @@ void racing_fb_render(RacingFbView *v)
 
 void racing_fb_render_menu(RacingFbView *v)
 {
-    int bw = WIN_WIDTH - 160;
-    int bh = 54;
-    int bx;
-    int by = 88;
+    const RacingGame *g;
 
     if (v == NULL) {
         return;
     }
-
-    if (bw < 220) {
-        bw = WIN_WIDTH - 40;
-    }
-    bx = (WIN_WIDTH - bw) / 2;
+    g = v->game;
 
     render_menu_background(v);
-    fb_draw_text_centered(v, WIN_WIDTH / 2, 14, "Racing", 0xffffffu);
+
+    if (g->mode == RACING_MODE_MAP_SELECT)
     {
+        /* 关卡选择:中间完整赛道缩略图(起点左下→终点右上),两侧 < > 切图,下方难度。 */
+        int tw = 300;
+        int th = 176;
+        int tx = (WIN_WIDTH - tw) / 2;
+        int ty = 60;
         char mbuf[48];
-        snprintf(mbuf, sizeof(mbuf), "Map: %s",
-                 racing_game_map_name_ascii(v->game->mapIndex));
-        fb_draw_text_centered(v, WIN_WIDTH / 2, 38, mbuf, 0x7fffc0u);
+        fb_draw_text_centered(v, WIN_WIDTH / 2, 14, "SELECT TRACK", 0xffffffu);
+        fb_fill_rect_alpha(v, tx - 4, ty - 4, tx + tw + 3, ty + th + 3, 0x0d1730u, 210);
+        render_track_topdown(v, g, tx, ty, tw, th, 0);
+        render_button(v, 14, ty + th / 2 - 26, 56, 52, "<", "prev", 0x47a8ffu);
+        render_button(v, WIN_WIDTH - 14 - 56, ty + th / 2 - 26, 56, 52, ">", "next", 0x47a8ffu);
+        snprintf(mbuf, sizeof(mbuf), "%s   %s", racing_game_map_name_ascii(g->mapIndex),
+                 g->mapIndex == 0 ? "Easy" : (g->mapIndex == 1 ? "Medium" : "Hard"));
+        fb_draw_text_centered(v, WIN_WIDTH / 2, ty + th + 12, mbuf, 0x7fffc0u);
+        draw_difficulty_fb(v, WIN_WIDTH / 2, ty + th + 36, g->mapIndex);
+        fb_draw_text_centered(v, WIN_WIDTH / 2, WIN_HEIGHT - 14,
+                              "< > switch | center START | top BACK", 0xbfd1ffu);
+        fb_present(v);
+        return;
     }
-    fb_draw_text_centered(v, WIN_WIDTH / 2, 62, "tap top: change map", 0xbfd1ffu);
-    render_button(v, bx, by, bw, bh, "Original Mode", "Touch left / right, GPIO boost", 0x55d37au);
-    by += bh + 18;
-    render_button(v, bx, by, bw, bh, "Gyro Mode", "JY60 arc left / right, touch-hold boost", 0x47a8ffu);
-    by += bh + 18;
-    render_button(v, bx, by, bw, bh, "Test Mode", "Show and print JY60 data", 0xffcc47u);
-    fb_draw_text_centered(v, WIN_WIDTH / 2, WIN_HEIGHT - 28, "JY60 uses /dev/uart1 9600 8N1", 0xbfd1ffu);
-    fb_present(v);
+
+    if (g->mode == RACING_MODE_CONTROL_SELECT)
+    {
+        /* 操作选择:Original / Gyro / Test,当前高亮(自身色),其余暗色。 */
+        const char *names[3] = {"Original", "Gyro", "Test"};
+        const char *hints[3] = {"Touch L/R + GPIO", "JY60 tilt L/R", "Show JY60 data"};
+        uint32_t col[3] = {0x55d37au, 0x47a8ffu, 0xffcc47u};
+        int bw = 300;
+        int bh = 52;
+        int bx = (WIN_WIDTH - bw) / 2;
+        int k;
+        fb_draw_text_centered(v, WIN_WIDTH / 2, 16, "SELECT CONTROL", 0xffffffu);
+        for (k = 0; k < 3; k++)
+        {
+            char t[48];
+            uint32_t c = (k == g->menuControlMode) ? col[k] : 0x2a3a5au;
+            snprintf(t, sizeof(t), "%s %s", (k == g->menuControlMode) ? ">" : " ", names[k]);
+            render_button(v, bx, 52 + k * (bh + 12), bw, bh, t, hints[k], c);
+        }
+        fb_draw_text_centered(v, WIN_WIDTH / 2, WIN_HEIGHT - 14,
+                              "< > switch | center OK | top BACK", 0xbfd1ffu);
+        fb_present(v);
+        return;
+    }
+
+    /* 主菜单(START):标题 + 当前操作模式 + 关卡/操作两个按钮(上=关卡,下=操作)。 */
+    {
+        int bw = 320;
+        int bh = 60;
+        int bx = (WIN_WIDTH - bw) / 2;
+        char mbuf[48];
+        fb_draw_text_centered(v, WIN_WIDTH / 2, 18, "NAILONG  RACING", 0xffd23cu);
+        snprintf(mbuf, sizeof(mbuf), "Control: %s",
+                 g->menuControlMode == 1 ? "Gyro" : "Original");
+        fb_draw_text_centered(v, WIN_WIDTH / 2, 44, mbuf, 0x7fffc0u);
+        render_button(v, bx, 76, bw, bh, "TRACK", "Select track", 0x55d37au);
+        render_button(v, bx, 76 + bh + 16, bw, bh, "CONTROL", "Select control", 0x47a8ffu);
+        fb_draw_text_centered(v, WIN_WIDTH / 2, WIN_HEIGHT - 14,
+                              "Btn2: quit | tap top=Track / bot=Control", 0xbfd1ffu);
+        fb_present(v);
+    }
 }
 
 void racing_fb_render_gyro_test(RacingFbView *v, const Jy60Sample *sample)

@@ -31,11 +31,17 @@ static RacingInput read_desktop_input(bool *running)
             } else if (event.key.keysym.scancode == SDL_SCANCODE_F) {
                 input.fly = true;
             } else if (event.key.keysym.scancode == SDL_SCANCODE_1) {
-                input.map1 = true;
+                input.mapSelect = true;     /* 主菜单 → 关卡选择 */
             } else if (event.key.keysym.scancode == SDL_SCANCODE_2) {
-                input.map2 = true;
-            } else if (event.key.keysym.scancode == SDL_SCANCODE_3) {
-                input.map3 = true;
+                input.controlSelect = true; /* 主菜单 → 操作选择 */
+            } else if (event.key.keysym.scancode == SDL_SCANCODE_LEFT) {
+                input.cyclePrev = true;     /* 二级菜单:上一项 */
+            } else if (event.key.keysym.scancode == SDL_SCANCODE_RIGHT) {
+                input.cycleNext = true;     /* 二级菜单:下一项 */
+            } else if (event.key.keysym.scancode == SDL_SCANCODE_BACKSPACE) {
+                input.back = true;          /* 二级菜单:返回 */
+            } else if (event.key.keysym.scancode == SDL_SCANCODE_M) {
+                input.toMenu = true;        /* 暂停/胜利:回主菜单 */
             }
         }
     }

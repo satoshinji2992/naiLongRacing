@@ -37,6 +37,7 @@ struct RacingSdlRenderer
     SDL_Texture *nailongBupt;   /* 地图“一路邮你”的收集物：北邮校徽 */
     SDL_Texture *bgBupt;        /* 地图“一路邮你”的背景：北邮校门 */
     TTF_Font *font;
+    TTF_Font *titleFont;   /* 大号字体，菜单标题用 */
     bool imageReady;
     bool ttfReady;
 };
@@ -165,47 +166,241 @@ static void draw_center_panel(SDL_Renderer *renderer, int width, int height, SDL
 }
 
 /* 统一绘制开始/暂停/结束时的操作提示。 */
-static void draw_mode_overlay(SDL_Renderer *renderer, TTF_Font *font, const RacingGame *game)
+/* 水平居中绘制一行文字(cy 为文字顶部 y)。 */
+static void draw_text_centered(SDL_Renderer *r, TTF_Font *font, const char *text, int cy, SDL_Color col)
 {
-    char text[80];
-    SDL_Color title = {255, 255, 255, 255};
-    SDL_Color body = {230, 236, 255, 255};
-    SDL_Color hint = {175, 193, 230, 255};
+    int tw = 0;
+    int th = 0;
+    if (font != NULL && text != NULL)
+    {
+        TTF_SizeUTF8(font, text, &tw, &th);
+    }
+    draw_text(r, font, text, (WIN_WIDTH - tw) / 2, cy, col);
+}
 
-    if (game->mode == RACING_MODE_PLAYING) {
+/* 难度指示:三格,填充数 = 难度(简单 1 / 中等 2 / 困难 3),颜色随难度。 */
+static void draw_difficulty(SDL_Renderer *r, int cx, int cy, int mapIndex)
+{
+    const int n = 3;
+    const int gap = 8;
+    const int sz = 10;
+    const Uint8 col[3][3] = {{80, 200, 110}, {240, 200, 70}, {230, 90, 80}};
+    int totalW = n * sz + (n - 1) * gap;
+    int x0 = cx - totalW / 2;
+    int filled = mapIndex + 1;
+    int i;
+    for (i = 0; i < n; i++)
+    {
+        SDL_Rect d = {x0 + i * (sz + gap), cy, sz, sz};
+        if (i < filled)
+        {
+            SDL_SetRenderDrawColor(r, col[mapIndex][0], col[mapIndex][1], col[mapIndex][2], 255);
+        }
+        else
+        {
+            SDL_SetRenderDrawColor(r, 70, 80, 100, 255);
+        }
+        SDL_RenderFillRect(r, &d);
+    }
+}
+
+/* 简单按钮:填充 + 边框 + 居中文字,selected 时高亮。 */
+static void draw_button(SDL_Renderer *r, int x, int y, int w, int h,
+                        const char *label, TTF_Font *font, SDL_Color textCol, bool selected)
+{
+    SDL_Rect box = {x, y, w, h};
+    int tw = 0;
+    int th = 0;
+    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(r, selected ? 40 : 24, selected ? 74 : 40, selected ? 122 : 84, 235);
+    SDL_RenderFillRect(r, &box);
+    SDL_SetRenderDrawColor(r, selected ? 255 : 127, selected ? 210 : 151, selected ? 90 : 199, 255);
+    SDL_RenderDrawRect(r, &box);
+    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE);
+    if (font != NULL && label != NULL)
+    {
+        TTF_SizeUTF8(font, label, &tw, &th);
+    }
+    draw_text(r, font, label, x + (w - tw) / 2, y + (h - th) / 2, textCol);
+}
+
+/* 赛道完整缩略图(斜放,起点左下→终点右上),关卡选择中间展示。
+ * SDL 无多边形,用沿对角线垂直方向偏移多条平行折线凑出路面带宽。 */
+static void draw_track_thumbnail(SDL_Renderer *r, const RacingGame *game, int x0, int y0, int w, int h)
+{
+    enum { STEP = 10 };
+    SDL_Point pts[ROAD_COUNT / STEP + 2];
+    SDL_Point bp[ROAD_COUNT / STEP + 2];
+    float xmin = 1e30f;
+    float xmax = -1e30f;
+    float xmid;
+    float half;
+    int inset;
+    float sx, sy, fx, fy, dxs, dys, dlen, dnx, dny, pnx, pny, lat;
+    int bandHalf;
+    int n = 0;
+    int i;
+
+    for (i = 0; i < ROAD_COUNT; i++)
+    {
+        float xv = game->roads[i].x;
+        if (xv < xmin) xmin = xv;
+        if (xv > xmax) xmax = xv;
+    }
+    xmid = (xmin + xmax) * 0.5f;
+    half = (xmax - xmin) * 0.5f;
+    if (half < 1.0f) half = 1.0f;
+
+    inset = (w < h ? w : h) / 10 + 4;
+    sx = (float)(x0 + inset);
+    sy = (float)(y0 + h - inset);
+    fx = (float)(x0 + w - inset);
+    fy = (float)(y0 + inset);
+    dxs = fx - sx;
+    dys = fy - sy;
+    dlen = sqrtf(dxs * dxs + dys * dys);
+    if (dlen < 1.0f) dlen = 1.0f;
+    dnx = dxs / dlen;
+    dny = dys / dlen;
+    pnx = -dny;
+    pny = dnx;
+    lat = (w < h ? w : h) * 0.18f;
+    bandHalf = (int)(game->roadWidth / (float)ROAD_WIDTH * 7.0f + 0.5f);
+    if (bandHalf < 2) bandHalf = 2;
+    if (bandHalf > 10) bandHalf = 10;
+
+    for (i = 0; i < ROAD_COUNT; i += STEP)
+    {
+        float u = (float)i / (float)(ROAD_COUNT - 1);
+        float vv = (game->roads[i].x - xmid) / half;
+        float bx, by, cx, cy;
+        if (vv < -1.0f) vv = -1.0f;
+        if (vv > 1.0f) vv = 1.0f;
+        bx = sx + u * dxs;
+        by = sy + u * dys;
+        cx = bx + vv * lat * pnx;
+        cy = by + vv * lat * pny;
+        pts[n].x = (int)cx;
+        pts[n].y = (int)cy;
+        n++;
+    }
+
+    SDL_SetRenderDrawColor(r, 75, 111, 214, 255);
+    for (int o = -bandHalf; o <= bandHalf; o++)
+    {
+        for (int j = 0; j < n; j++)
+        {
+            bp[j].x = pts[j].x + (int)(o * pnx);
+            bp[j].y = pts[j].y + (int)(o * pny);
+        }
+        SDL_RenderDrawLines(r, bp, n);
+    }
+
+    {
+        SDL_Rect s = {(int)sx - 4, (int)sy - 4, 8, 8};
+        SDL_Rect f = {(int)fx - 4, (int)fy - 4, 8, 8};
+        SDL_SetRenderDrawColor(r, 51, 194, 77, 255);
+        SDL_RenderFillRect(r, &s);
+        SDL_SetRenderDrawColor(r, 224, 65, 60, 255);
+        SDL_RenderFillRect(r, &f);
+    }
+}
+
+/* 统一绘制菜单(主菜单/关卡选择/操作选择)/暂停/结束界面。 */
+static void draw_mode_overlay(RacingSdlRenderer *view, const RacingGame *game)
+{
+    SDL_Renderer *r = view->renderer;
+    TTF_Font *font = view->font;
+    SDL_Color titleCol = {255, 220, 120, 255};
+    SDL_Color body = {232, 238, 255, 255};
+    SDL_Color hint = {175, 193, 230, 255};
+    char buf[64];
+
+    if (game->mode == RACING_MODE_PLAYING)
+    {
         return;
     }
 
-    draw_center_panel(renderer, 300, 196, (SDL_Color){13, 23, 48, 218}, (SDL_Color){127, 151, 199, 220});
-
-    if (game->mode == RACING_MODE_START) {
-        int sel = game->mapIndex;
-        char mapbuf[48];
-
-        draw_text(renderer, font, "Racing SDL", WIN_WIDTH / 2 - 70, 66, title);
-
-        snprintf(mapbuf, sizeof(mapbuf), "Map: %s", racing_game_map_name(sel));
-        draw_text(renderer, font, mapbuf, WIN_WIDTH / 2 - 80, 94, body);
-
-        /* 三张地图，当前选中的高亮并加 ">" 前缀。 */
-        for (int k = 0; k < 3; k++) {
-            char line[48];
-            SDL_Color col = (k == sel) ? title : hint;
-            snprintf(line, sizeof(line), "%s%d  %s", (k == sel) ? "> " : "  ", k + 1, racing_game_map_name(k));
-            draw_text(renderer, font, line, WIN_WIDTH / 2 - 92, 118 + k * 22, col);
+    if (game->mode == RACING_MODE_START)
+    {
+        /* 主菜单:标题「奶龙赛车」+ 副标题 + 关卡/操作两个按钮。 */
+        draw_center_panel(r, 372, 252, (SDL_Color){13, 23, 48, 230}, (SDL_Color){127, 151, 199, 220});
+        if (view->nailong != NULL)
+        {
+            SDL_Rect m = {WIN_WIDTH - 92, 28, 66, 66};
+            SDL_RenderCopy(r, view->nailong, NULL, &m);
         }
+        draw_text_centered(r, view->titleFont, "奶龙赛车", 38, titleCol);
+        draw_text_centered(r, font, "NAILONG  RACING", 86, body);
+        snprintf(buf, sizeof(buf), "操控 Control: %s",
+                 game->menuControlMode == 1 ? "Gyro (JY60)" : "Original (Touch)");
+        draw_text_centered(r, font, buf, 110, (SDL_Color){120, 230, 140, 255});
+        draw_button(r, WIN_WIDTH / 2 - 132, 138, 264, 46, "1   关卡选择  Track", font, body, false);
+        draw_button(r, WIN_WIDTH / 2 - 132, 198, 264, 46, "2   操作选择  Control", font, body, false);
+        draw_text_centered(r, font, "1 Track       2 Control", WIN_HEIGHT - 34, hint);
+        return;
+    }
 
-        draw_text(renderer, font, "1/2/3 select   Enter start", WIN_WIDTH / 2 - 116, 190, body);
-        draw_text(renderer, font, "R restart   P pause", WIN_WIDTH / 2 - 92, 212, hint);
-    } else if (game->mode == RACING_MODE_PAUSED) {
-        draw_text(renderer, font, "Paused", WIN_WIDTH / 2 - 42, 60, title);
-        draw_text(renderer, font, "Enter to resume", WIN_WIDTH / 2 - 76, 100, body);
-        draw_text(renderer, font, "R to restart", WIN_WIDTH / 2 - 64, 124, hint);
-    } else if (game->mode == RACING_MODE_WIN) {
-        snprintf(text, sizeof(text), "Finish in %ds", game->finalSeconds);
-        draw_text(renderer, font, text, WIN_WIDTH / 2 - 70, 60, title);
-        draw_text(renderer, font, "Enter to restart", WIN_WIDTH / 2 - 80, 100, body);
-        draw_text(renderer, font, "R to restart", WIN_WIDTH / 2 - 64, 124, hint);
+    if (game->mode == RACING_MODE_MAP_SELECT)
+    {
+        /* 关卡选择:< 缩略图 > + 难度等级。 */
+        int tw = 244;
+        int th = 176;
+        int tx = (WIN_WIDTH - tw) / 2;
+        int ty = 40;
+        int sideY = ty + th / 2 - 22;
+        SDL_Rect box;
+        draw_center_panel(r, WIN_WIDTH - 24, WIN_HEIGHT - 24, (SDL_Color){13, 23, 48, 230}, (SDL_Color){127, 151, 199, 220});
+        draw_text_centered(r, font, "关卡选择 — Select Track", 12, body);
+        box = (SDL_Rect){tx - 4, ty - 4, tw + 8, th + 8};
+        SDL_SetRenderDrawColor(r, 28, 42, 70, 255);
+        SDL_RenderFillRect(r, &box);
+        draw_track_thumbnail(r, game, tx, ty, tw, th);
+        draw_button(r, 20, sideY, 56, 44, "<", font, body, true);
+        draw_button(r, WIN_WIDTH - 20 - 56, sideY, 56, 44, ">", font, body, true);
+        snprintf(buf, sizeof(buf), "%s   %s", racing_game_map_name(game->mapIndex),
+                 racing_game_map_name_ascii(game->mapIndex));
+        draw_text_centered(r, font, buf, ty + th + 12, body);
+        draw_difficulty(r, WIN_WIDTH / 2, ty + th + 38, game->mapIndex);
+        draw_text_centered(r, font, "<- -> Switch   Enter Start   Esc Back", WIN_HEIGHT - 24, hint);
+        return;
+    }
+
+    if (game->mode == RACING_MODE_CONTROL_SELECT)
+    {
+        /* 操作选择:Original / Gyro / Test,当前高亮。 */
+        const char *names[3] = {"Original  (Touch)", "Gyro  (JY60)", "Test  (JY60 Data)"};
+        int k;
+        draw_center_panel(r, 372, 268, (SDL_Color){13, 23, 48, 230}, (SDL_Color){127, 151, 199, 220});
+        draw_text_centered(r, font, "操作选择 — Control", 16, body);
+        for (k = 0; k < 3; k++)
+        {
+            draw_button(r, WIN_WIDTH / 2 - 142, 54 + k * 56, 284, 46, names[k], font, body,
+                        k == game->menuControlMode);
+        }
+        draw_text_centered(r, font, "<- -> Switch   Enter Confirm   Esc Back", WIN_HEIGHT - 24, hint);
+        return;
+    }
+
+    if (game->mode == RACING_MODE_PAUSED)
+    {
+        draw_center_panel(r, 300, 168, (SDL_Color){13, 23, 48, 225}, (SDL_Color){127, 151, 199, 220});
+        draw_text_centered(r, view->titleFont, "暂停", 48, titleCol);
+        draw_text_centered(r, font, "Enter to resume", 100, body);
+        draw_text_centered(r, font, "R to restart", 122, hint);
+        draw_text_centered(r, font, "M main menu", 144, (SDL_Color){255, 210, 60, 255});
+        return;
+    }
+
+    if (game->mode == RACING_MODE_WIN)
+    {
+        snprintf(buf, sizeof(buf), "Finish in %ds", game->finalSeconds);
+        draw_center_panel(r, 300, 168, (SDL_Color){13, 23, 48, 225}, (SDL_Color){127, 151, 199, 220});
+        draw_text_centered(r, view->titleFont, buf, 48, titleCol);
+        draw_text_centered(r, font, "Enter to restart", 100, body);
+        draw_text_centered(r, font, "R to restart", 122, hint);
+        draw_text_centered(r, font, "M main menu", 144, (SDL_Color){255, 210, 60, 255});
+        return;
     }
 }
 
@@ -397,7 +592,7 @@ static void draw_trapezoid(SDL_Renderer *renderer, ProjectedRoad farRoad, Projec
 }
 
 /* 草地拆成左右两条带子，避免转弯时把路心也盖住。 */
-static void draw_ground_band(SDL_Renderer *renderer, ProjectedRoad farRoad, ProjectedRoad nearRoad, float bankAngle)
+static void draw_ground_band(SDL_Renderer *renderer, ProjectedRoad farRoad, ProjectedRoad nearRoad, float bankAngle, bool darkGrass)
 {
     float cosBank = cosf(bankAngle);
     float sinBank = sinf(bankAngle);
@@ -415,7 +610,7 @@ static void draw_ground_band(SDL_Renderer *renderer, ProjectedRoad farRoad, Proj
 
     for (int i = 0; i < 4; i++)
     {
-        vertices[i].color = (SDL_Color){0, 199, 0, 255};
+        vertices[i].color = darkGrass ? (SDL_Color){46, 51, 56, 255} : (SDL_Color){0, 199, 0, 255};
         vertices[i].tex_coord.x = 0.0f;
         vertices[i].tex_coord.y = 0.0f;
     }
@@ -432,7 +627,7 @@ static void draw_ground_band(SDL_Renderer *renderer, ProjectedRoad farRoad, Proj
 
     for (int i = 0; i < 4; i++)
     {
-        vertices[i].color = (SDL_Color){0, 199, 0, 255};
+        vertices[i].color = darkGrass ? (SDL_Color){46, 51, 56, 255} : (SDL_Color){0, 199, 0, 255};
         vertices[i].tex_coord.x = 0.0f;
         vertices[i].tex_coord.y = 0.0f;
     }
@@ -484,7 +679,7 @@ static void render_track(SDL_Renderer *renderer, const RacingGame *game)
             continue;
         }
 
-        draw_ground_band(renderer, farRoad, nearRoad, bankAngle);
+        draw_ground_band(renderer, farRoad, nearRoad, bankAngle, game->mapIndex == 1);
         draw_trapezoid(renderer, farRoad, nearRoad, 1.3f, bankAngle, edge);
         draw_trapezoid(renderer, farRoad, nearRoad, 1.0f, bankAngle, road);
 
@@ -609,6 +804,16 @@ RacingSdlRenderer *racing_sdl_renderer_create(SDL_Renderer *renderer)
             view->font = TTF_OpenFont(ASSET_DIR "/fonts/Arial.ttf", 18);
             fprintf(stderr, "font Arial.ttf: %s\n", view->font ? "OK" : TTF_GetError());
         }
+        /* 大号标题字体（同字体，36px）。 */
+        view->titleFont = TTF_OpenFont(ASSET_DIR "/fonts/noto.ttc", 36);
+        if (view->titleFont == NULL)
+        {
+            view->titleFont = TTF_OpenFont(ASSET_DIR "/fonts/cjk.ttf", 36);
+        }
+        if (view->titleFont == NULL)
+        {
+            view->titleFont = TTF_OpenFont(ASSET_DIR "/fonts/Arial.ttf", 36);
+        }
     }
 
     printf("Racing SDL assets loaded from %s.\n", ASSET_DIR);
@@ -636,6 +841,11 @@ void racing_sdl_renderer_delete(RacingSdlRenderer *view)
         TTF_CloseFont(view->font);
         view->font = NULL;
     }
+    if (view->titleFont != NULL)
+    {
+        TTF_CloseFont(view->titleFont);
+        view->titleFont = NULL;
+    }
 
     if (view->ttfReady)
     {
@@ -650,8 +860,9 @@ void racing_sdl_renderer_delete(RacingSdlRenderer *view)
     free(view);
 }
 
-/* 左上角缩略图：把整条赛道按“横向偏移 x 沿赛道展开”画成一条曲线，
- * 红点标出当前 camZ 在赛道上的位置。尺寸约为屏幕的 1/4 × 1/4。 */
+/* 左上角小地图:以当前 camZ 为中心的局部滚动窗口——前方多看、后方少看,路面
+ * 随前进向上滚动,黄点标车当前位置。路宽按当前 roadWidth 画成一条带(越难
+ * 越窄)。尺寸约为屏幕的 1/4 × 1/4。 */
 static void draw_minimap(SDL_Renderer *renderer, const RacingGame *game)
 {
     enum
@@ -660,19 +871,55 @@ static void draw_minimap(SDL_Renderer *renderer, const RacingGame *game)
         H = WIN_HEIGHT / 4,
         X0 = 4,
         Y0 = 4,
-        PAD = 6,
-        STEP = 8
+        AHEAD = 60,
+        BEHIND = 12,
+        WIN = AHEAD + BEHIND + 1,
+        LSTEP = 2
     };
-    SDL_Point pts[ROAD_COUNT / STEP + 2];
+    SDL_Point pts[WIN];
+    SDL_Point bp[WIN];
+    int seg0 = (int)(game->camZ / SEG_LENGTH);
+    int cx = X0 + W / 2;
+    int m = (W < H ? W : H) / 10 + 2;
+    int yCur = Y0 + (int)(H * 0.72f);
+    int topY = Y0 + m;
+    int botY = Y0 + H - m;
+    float vsA = (float)(yCur - topY) / (float)AHEAD;
+    float vsB = (float)(botY - yCur) / (float)BEHIND;
+    float vs = (vsA < vsB ? vsA : vsB);
+    float halfw = (float)(W / 2 - m);
+    int bandHalf;
     float xmin = 1e30f;
     float xmax = -1e30f;
     float xmid;
     float half;
     int n = 0;
+    int d;
 
-    for (int i = 0; i < ROAD_COUNT; i++)
+    bandHalf = (int)(game->roadWidth / (float)ROAD_WIDTH * 6.0f + 0.5f);
+    if (bandHalf < 2)
     {
-        float xv = game->roads[i].x;
+        bandHalf = 2;
+    }
+    if (bandHalf > 8)
+    {
+        bandHalf = 8;
+    }
+
+    if (seg0 < 0)
+    {
+        seg0 = 0;
+    }
+    if (seg0 >= ROAD_COUNT)
+    {
+        seg0 = ROAD_COUNT - 1;
+    }
+
+    /* 求窗口横向范围,自适应铺满宽度。 */
+    for (d = 0; d < WIN; d++)
+    {
+        int seg = ((seg0 - BEHIND + d) % ROAD_COUNT + ROAD_COUNT) % ROAD_COUNT;
+        float xv = game->roads[seg].x;
         if (xv < xmin)
         {
             xmin = xv;
@@ -686,7 +933,7 @@ static void draw_minimap(SDL_Renderer *renderer, const RacingGame *game)
     half = (xmax - xmin) * 0.5f;
     if (half < 1.0f)
     {
-        half = 1.0f; /* 直道 x 全 0，画成水平直线 */
+        half = 1.0f;
     }
 
     /* 半透明底板 + 边框。 */
@@ -697,63 +944,39 @@ static void draw_minimap(SDL_Renderer *renderer, const RacingGame *game)
         SDL_RenderFillRect(renderer, &box);
         SDL_SetRenderDrawColor(renderer, 127, 151, 199, 230);
         SDL_RenderDrawRect(renderer, &box);
-        SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
     }
 
-    /* 赛道轮廓：每 STEP 段采样一个点，连成折线。 */
-    for (int i = 0; i < ROAD_COUNT; i += STEP)
+    /* 中心线采样:横向 x→屏幕水平,段偏移 dd→垂直(前方在上)。 */
+    for (d = 0; d < WIN; d += LSTEP)
     {
-        float t = (float)i / (float)(ROAD_COUNT - 1);
-        float norm = (game->roads[i].x - xmid) / half;
-        if (norm < -1.0f)
-        {
-            norm = -1.0f;
-        }
-        if (norm > 1.0f)
-        {
-            norm = 1.0f;
-        }
-        pts[n].x = X0 + PAD + (int)(t * (W - 2 * PAD));
-        pts[n].y = Y0 + H / 2 + (int)(norm * (H / 2 - PAD));
+        int seg = ((seg0 - BEHIND + d) % ROAD_COUNT + ROAD_COUNT) % ROAD_COUNT;
+        float vv = (game->roads[seg].x - xmid) / half;
+        int dd = d - BEHIND;                 /* 负=后方,正=前方 */
+        pts[n].x = (int)((float)cx + vv * halfw);
+        pts[n].y = (int)((float)yCur - dd * vs);
         n++;
     }
-    SDL_SetRenderDrawColor(renderer, 120, 230, 140, 255);
-    SDL_RenderDrawLines(renderer, pts, n);
 
-    /* 当前位置红点：camZ 在赛道上的进度。 */
+    /* 路带:横向偏移多画几条平行折线凑出宽度。 */
+    SDL_SetRenderDrawColor(renderer, 75, 111, 214, 255);
+    for (int o = -bandHalf; o <= bandHalf; o++)
     {
-        float prog = (float)game->camZ / (float)TRACK_LENGTH;
-        int seg;
-        int dx;
-        int dy;
-        float norm;
-        SDL_Rect dot;
+        for (int j = 0; j < n; j++)
+        {
+            bp[j].x = pts[j].x + o;
+            bp[j].y = pts[j].y;
+        }
+        SDL_RenderDrawLines(renderer, bp, n);
+    }
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
 
-        if (prog < 0.0f)
-        {
-            prog = 0.0f;
-        }
-        if (prog > 1.0f)
-        {
-            prog = 1.0f;
-        }
-        seg = (int)(prog * (ROAD_COUNT - 1));
-        norm = (game->roads[seg].x - xmid) / half;
-        if (norm < -1.0f)
-        {
-            norm = -1.0f;
-        }
-        if (norm > 1.0f)
-        {
-            norm = 1.0f;
-        }
-        dx = X0 + PAD + (int)(prog * (W - 2 * PAD));
-        dy = Y0 + H / 2 + (int)(norm * (H / 2 - PAD));
-        dot.x = dx - 2;
-        dot.y = dy - 2;
-        dot.w = 5;
-        dot.h = 5;
-        SDL_SetRenderDrawColor(renderer, 255, 60, 60, 255);
+    /* 当前位置黄点(dd=0,即 yCur 处)。 */
+    {
+        int seg = seg0 % ROAD_COUNT;
+        float vv = (game->roads[seg].x - xmid) / half;
+        int bx = (int)((float)cx + vv * halfw);
+        SDL_Rect dot = {bx - 3, yCur - 3, 6, 6};
+        SDL_SetRenderDrawColor(renderer, 255, 210, 60, 255);
         SDL_RenderFillRect(renderer, &dot);
     }
 }
@@ -770,11 +993,12 @@ void racing_sdl_render(RacingSdlRenderer *view, const RacingGame *game)
 
     renderer = view->renderer;
 
-    /* 背景：地图“一路邮你”用北邮校门照，其余用天空 + 云/山条带。 */
+    /* 背景：地图2(中等)用北邮校门照(带视差，随 camX 缓慢横滚)，其余用天空 + 云/山条带。 */
     if (game->mapIndex == 1 && view->bgBupt != NULL)
     {
-        SDL_Rect full = {0, 0, WIN_WIDTH, WIN_HEIGHT};
-        SDL_RenderCopy(renderer, view->bgBupt, NULL, &full);
+        SDL_SetRenderDrawColor(renderer, 40, 44, 50, 255);
+        SDL_RenderClear(renderer);
+        draw_texture_strip(renderer, view->bgBupt, 0, WIN_HEIGHT, game->camX, 0.012f);
     }
     else
     {
@@ -808,6 +1032,11 @@ void racing_sdl_render(RacingSdlRenderer *view, const RacingGame *game)
         snprintf(text, sizeof(text), "%ds", game->elapsedMs / 1000);
         draw_text(renderer, view->font, text, WIN_WIDTH / 2 - 14, 28, cyan);
         draw_energy(renderer, game->energy);
+        if (game->boosting)
+        {
+            draw_text(renderer, view->font, "BOOST", WIN_WIDTH - 76, 6,
+                      (SDL_Color){255, 136, 0, 255});
+        }
 
         if (game->mode == RACING_MODE_WIN)
         {
@@ -822,7 +1051,7 @@ void racing_sdl_render(RacingSdlRenderer *view, const RacingGame *game)
         draw_minimap(renderer, game);
     }
 
-    draw_mode_overlay(renderer, view->font, game);
+    draw_mode_overlay(view, game);
 
     /* 跳脸：地图“一路邮你”用校徽，其余用奶龙头。 */
     {

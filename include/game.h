@@ -36,7 +36,8 @@ typedef struct Nailong {
 
 typedef enum RacingMode {
     RACING_MODE_START,
-    RACING_MODE_MAP_SELECT,   /* 关卡/地图选择界面 */
+    RACING_MODE_MAP_SELECT,      /* 关卡/赛道选择界面 */
+    RACING_MODE_CONTROL_SELECT,  /* 操作/操控方式选择界面 */
     RACING_MODE_PLAYING,
     RACING_MODE_PAUSED,
     RACING_MODE_WIN
@@ -55,10 +56,15 @@ typedef struct RacingInput {
     bool map1;
     bool map2;
     bool map3;
-    bool mapSelect;   /* 开始界面 → 进入地图选择 */
-    bool back;        /* 地图选择 → 返回开始界面 */
-    bool cyclePrev;   /* 地图选择：上一张图 */
-    bool cycleNext;   /* 地图选择：下一张图 */
+    bool mapSelect;       /* 开始界面 → 进入关卡选择 */
+    bool controlSelect;   /* 开始界面 → 进入操作选择 */
+    bool back;            /* 二级菜单 → 返回主菜单 */
+    bool cyclePrev;       /* 二级菜单：上一项 */
+    bool cycleNext;       /* 二级菜单：下一项 */
+    bool toMenu;          /* 暂停/胜利 → 返回主菜单 */
+    bool ctrl1;           /* 操作选择:直接选第 1 项(Original) */
+    bool ctrl2;           /* 操作选择:直接选第 2 项(Gyro) */
+    bool ctrl3;           /* 操作选择:直接选第 3 项(Test) */
 } RacingInput;
 
 typedef struct RacingGame {
@@ -81,8 +87,10 @@ typedef struct RacingGame {
     bool turnRight;
     bool isOut;
     bool isFlying;
+    bool boosting;          /* 本帧 boost 是否生效(供 HUD 显示) */
     int mapIndex;
     float roadWidth;
+    int menuControlMode;        /* 操作选择:0=Original 1=Gyro 2=Test */
     int collectibleRespawnMs;   /* 收集物被吃后多久重生(地图2 校徽刷新更快)；0=不重生 */
 } RacingGame;
 

@@ -1,8 +1,14 @@
 /****************************************************************************
  * Racing 输入处理(fb 版,无 LVGL)
  *
- * 触摸:open /dev/input0,非阻塞读 struct touch_sample_s,按屏幕分区映射。
- * GPIO:直接 open /dev/gpioN + GPIOC_READ(板载物理按键)。
+ * 触摸(open /dev/input0):
+ *  - 菜单屏(START / MAP_SELECT / CONTROL_SELECT):按屏分区映射
+ *      主菜单:上半=关卡选择,下半=操作选择;
+ *      二级菜单:左 < / 右 > / 中间确认。(返回走按钮,不用触摸)
+ *  - 游戏中·普通模式:左 1/3 左转、右 1/3 右转、中间 1/3 点一下切换 boost 开/关。
+ *  - 游戏中·体感模式:不触摸转向(方向靠 JY60),按住屏幕任意处=boost,松开=关。
+ *  - 车始终自动前进(accelerate 由主循环强制);触摸这里控制的是 boost(能量加速)。
+ * GPIO 三按键(/dev/gpioN):① start/pause ② back(回主菜单)③ restart。
  ****************************************************************************/
 
 #include "racing_input.h"
@@ -17,7 +23,6 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
-#include <time.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
 
@@ -38,174 +43,94 @@
 #endif
 
 #define RACING_TOUCH_MAX_POINTS 5
-#define RACING_TOUCH_BOOST_HOLD_MS 100
 
-typedef struct {
-    int x1;
-    int y1;
-    int x2;
-    int y2;
-} Rect;
-
-typedef struct {
-    Rect accelerate;
-    Rect brake;
-    Rect left;
-    Rect right;
-    Rect boost;
-    Rect fly;
-    Rect pause;
-    Rect start;
-} TouchZones;
-
-static TouchZones g_zones;
 static RacingInput g_input;
-static RacingMenuSelection g_menu_selection;
+static int g_menu_screen;     /* 当前菜单屏(RACING_MODE_*);0=游戏中/暂停 */
+static int g_drive_mode;      /* 游戏中操控:0=Original 1=Gyro */
+static bool g_boost_on;       /* Original:boost 开关(中间 1/3 点一下切换) */
+static bool g_touch_down;     /* 当前是否按住屏幕(Gyro:按住=boost) */
 static int g_touch_fd = -1;
 static int g_button_fds[3] = { -1, -1, -1 };
 static bool g_button_prev[3];
 static bool g_gpio_ready;
-static bool g_touch_boost_down;
-static bool g_touch_boost;
-static long g_touch_boost_since_ms;
 
-static long touch_now_ms(void)
+/* 菜单触摸:按当前菜单屏把落点映射成对应一次性输入(返回走按钮,不用触摸)。 */
+static void apply_menu_touch(int x, int y)
 {
-    struct timespec ts;
-
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return ts.tv_sec * 1000L + ts.tv_nsec / 1000000L;
-}
-
-static bool point_in_rect(int x, int y, const Rect *r)
-{
-    return x >= r->x1 && x <= r->x2 && y >= r->y1 && y <= r->y2;
-}
-
-static RacingMenuSelection menu_selection_from_point(int x, int y)
-{
-    int button_w = WIN_WIDTH - 160;
-    int button_h = 54;
-    int x1 = (WIN_WIDTH - button_w) / 2;
-    int x2 = x1 + button_w;
-    int y1 = 88;
-
-    if (button_w < 220) {
-        button_w = WIN_WIDTH - 40;
-        x1 = 20;
-        x2 = WIN_WIDTH - 20;
-    }
-
-    /* 顶部区域(模式按钮上方)触摸 = 循环切换地图。 */
-    if (y < y1) {
-        return RACING_MENU_MAP_CYCLE;
-    }
-
-    if (x < x1 || x > x2) {
-        return RACING_MENU_NONE;
-    }
-
-    if (y >= y1 && y <= y1 + button_h) {
-        return RACING_MENU_ORIGINAL;
-    }
-    y1 += button_h + 18;
-    if (y >= y1 && y <= y1 + button_h) {
-        return RACING_MENU_GYRO;
-    }
-    y1 += button_h + 18;
-    if (y >= y1 && y <= y1 + button_h) {
-        return RACING_MENU_TEST;
-    }
-
-    return RACING_MENU_NONE;
-}
-
-/* 触摸分区:左半屏左转/右半屏右转 + 中央开始/暂停。
- * Gyro Mode 的 boost 由上层把触摸长按状态映射过去。 */
-static void init_touch_zones(int width, int height)
-{
-    int hw = width / 2;
-    int hh = height / 2;
-
-    /* 转向:左半屏=左转,右半屏=右转(固定速度自动前进,无前进/后退)。 */
-    g_zones.left.x1 = 0;       g_zones.left.y1 = 0;        g_zones.left.x2 = hw;     g_zones.left.y2 = height;
-    g_zones.right.x1 = hw;     g_zones.right.y1 = 0;       g_zones.right.x2 = width; g_zones.right.y2 = height;
-
-    /* 中央矩形 = 开始/暂停(边沿触发) */
-    g_zones.start.x1 = hw - 60; g_zones.start.y1 = hh - 40;
-    g_zones.start.x2 = hw + 60; g_zones.start.y2 = hh + 40;
-    g_zones.pause = g_zones.start;
-
-    /* brake/accelerate 不用;boost 默认走 GPIO,触摸长按状态另行提供给上层。 */
-    g_zones.brake.x1 = -1; g_zones.brake.y1 = -1; g_zones.brake.x2 = -1; g_zones.brake.y2 = -1;
-    g_zones.accelerate = g_zones.brake;
-    g_zones.boost = g_zones.brake;
-    g_zones.fly = g_zones.brake;
-}
-
-static void clear_touch_axes(void)
-{
-    g_input.accelerate = false;
-    g_input.brake = false;
-    g_input.left = false;
-    g_input.right = false;
-    g_input.fly = false;
-}
-
-static void clear_touch_boost(void)
-{
-    g_touch_boost_down = false;
-    g_touch_boost = false;
-    g_touch_boost_since_ms = 0;
-}
-
-static void update_touch_boost_state(bool touch_down)
-{
-    if (touch_down) {
-        if (!g_touch_boost_down) {
-            g_touch_boost_since_ms = touch_now_ms();
+    if (g_menu_screen == RACING_MODE_START)
+    {
+        if (y < WIN_HEIGHT / 2)
+        {
+            g_input.mapSelect = true;       /* 上半:关卡选择 */
         }
-        g_touch_boost_down = true;
-    } else {
-        g_touch_boost_down = false;
-        g_touch_boost_since_ms = 0;
-        g_touch_boost = false;
+        else
+        {
+            g_input.controlSelect = true;   /* 下半:操作选择 */
+        }
     }
-}
-
-static void refresh_touch_boost(void)
-{
-    if (g_touch_boost_down &&
-        touch_now_ms() - g_touch_boost_since_ms >= RACING_TOUCH_BOOST_HOLD_MS) {
-        g_touch_boost = true;
-    } else {
-        g_touch_boost = false;
-    }
-}
-
-/* 把一个触摸点映射到分区输入。edge=true 表示按下瞬间(触发 start/pause)。 */
-static void apply_touch_point(int x, int y, bool edge)
-{
-    /* 中央优先:开始/暂停,且不当作移动。 */
-    if (point_in_rect(x, y, &g_zones.start)) {
-        clear_touch_axes();
-        if (edge) {
+    else if (g_menu_screen == RACING_MODE_MAP_SELECT)
+    {
+        /* 关卡选择:左 < / 右 > / 中间确认(浏览+预览式)。 */
+        if (x < WIN_WIDTH / 3)
+        {
+            g_input.cyclePrev = true;
+        }
+        else if (x > (WIN_WIDTH * 2) / 3)
+        {
+            g_input.cycleNext = true;
+        }
+        else
+        {
             g_input.start = true;
-            g_input.pause = true;
         }
+    }
+    else if (g_menu_screen == RACING_MODE_CONTROL_SELECT)
+    {
+        /* 操作选择:点哪个按钮选哪个(Original/Gyro/Test 竖排,按 y 分三段)。 */
+        if (y < 112)
+        {
+            g_input.ctrl1 = true;
+        }
+        else if (y < 176)
+        {
+            g_input.ctrl2 = true;
+        }
+        else
+        {
+            g_input.ctrl3 = true;
+        }
+    }
+}
+
+/* 游戏中触摸:按操控模式映射(控制的是 boost,车始终自动前进)。edge=按下瞬间
+ * (普通模式中间 1/3 点一下切换 boost)。 */
+static void apply_drive_touch(int x, int y, bool edge)
+{
+    (void)y;
+    if (g_drive_mode == 1)
+    {
+        /* 体感模式:触摸只管 boost(由 g_touch_down 驱动),不转向。 */
         return;
     }
+    /* 普通模式:左/右 1/3 转向,中间 1/3 切换 boost。 */
+    g_input.left = (x < WIN_WIDTH / 3);
+    g_input.right = (x > (WIN_WIDTH * 2) / 3);
+    if (edge && x >= WIN_WIDTH / 3 && x <= (WIN_WIDTH * 2) / 3)
+    {
+        g_boost_on = !g_boost_on;
+    }
+}
 
-    g_input.left = point_in_rect(x, y, &g_zones.left);
-    g_input.right = point_in_rect(x, y, &g_zones.right);
-    /* 前进由主循环强制;boost 默认走 GPIO,触摸长按状态另行提供给上层。 */
-    g_input.accelerate = false;
+static void clear_drive_axes(void)
+{
+    g_input.left = false;
+    g_input.right = false;
     g_input.brake = false;
     g_input.fly = false;
 }
 
 /****************************************************************************
- * GPIO 按键(板载物理按键)。
+ * GPIO 按键(板载物理按键):start/pause、back(回主菜单)、restart。
  ****************************************************************************/
 
 static int open_gpio_button(const char *devpath)
@@ -263,14 +188,18 @@ static void update_gpio_buttons(void)
         button[i] = read_gpio_button(g_button_fds[i]);
     }
 
-    /* 按键1:边沿触发 start/pause。 */
+    /* 按键1:start/pause(边沿);按键2:back(回主菜单,边沿);按键3:restart(边沿)。 */
     if (button[0] && !g_button_prev[0]) {
         g_input.start = true;
         g_input.pause = true;
     }
-    /* 按键2:原始模式 boost。按键3:fly。 */
-    g_input.boost = button[1];
-    g_input.fly = g_input.fly || button[2];
+    if (button[1] && !g_button_prev[1]) {
+        g_input.back = true;
+        g_input.toMenu = true;
+    }
+    if (button[2] && !g_button_prev[2]) {
+        g_input.restart = true;
+    }
 
     for (int i = 0; i < 3; i++) {
         g_button_prev[i] = button[i];
@@ -283,7 +212,6 @@ static void update_gpio_buttons(void)
 
 void racing_input_init(void)
 {
-    init_touch_zones(WIN_WIDTH, WIN_HEIGHT);
     g_touch_fd = open(CONFIG_EXAMPLES_RACING_INPUT_DEVPATH, O_RDWR | O_NONBLOCK);
     if (g_touch_fd < 0) {
         printf("[RACING] touchscreen not available: %s (%d)\n",
@@ -337,13 +265,11 @@ void racing_input_poll(void)
         int y;
 
         if (sample->npoints <= 0) {
-            clear_touch_boost();
             continue;
         }
 
         if (sample->npoints > RACING_TOUCH_MAX_POINTS) {
             printf("[RACING-TOUCH] unsupported points=%d\n", sample->npoints);
-            clear_touch_boost();
             continue;
         }
 
@@ -355,7 +281,6 @@ void racing_input_poll(void)
             if (got != remain) {
                 printf("[RACING-TOUCH] short multi-touch read: points=%d got=%zd need=%zd\n",
                        sample->npoints, got, remain);
-                clear_touch_boost();
                 continue;
             }
         }
@@ -367,8 +292,6 @@ void racing_input_poll(void)
             }
         }
 
-        update_touch_boost_state(active_points >= 1);
-
         flags = sample->point[0].flags;
         x = sample->point[0].x;
         y = sample->point[0].y;
@@ -377,14 +300,30 @@ void racing_input_poll(void)
         if (flags & TOUCH_UP) {
             printf("[RACING-TOUCH] UP   x=%d y=%d points=%d\n", x, y, active_points);
             if (active_points == 0) {
-                clear_touch_axes();
+                g_touch_down = false;
+                clear_drive_axes();          /* 松手:停止转向(Gyro 加速由 g_touch_down 停) */
             }
         } else if (flags & TOUCH_DOWN) {
-            printf("[RACING-TOUCH] DOWN x=%d y=%d points=%d\n", x, y, active_points);
-            g_menu_selection = menu_selection_from_point(x, y);
-            apply_touch_point(x, y, true);
+            g_touch_down = true;
+            printf("[RACING-TOUCH] DOWN x=%d y=%d points=%d screen=%d mode=%d\n",
+                   x, y, active_points, g_menu_screen, g_drive_mode);
+            if (g_menu_screen == RACING_MODE_START ||
+                g_menu_screen == RACING_MODE_MAP_SELECT ||
+                g_menu_screen == RACING_MODE_CONTROL_SELECT)
+            {
+                apply_menu_touch(x, y);
+            }
+            else
+            {
+                apply_drive_touch(x, y, true);   /* 游戏中:按模式映射 */
+            }
         } else if (flags & TOUCH_MOVE) {
-            apply_touch_point(x, y, false);
+            if (!(g_menu_screen == RACING_MODE_START ||
+                  g_menu_screen == RACING_MODE_MAP_SELECT ||
+                  g_menu_screen == RACING_MODE_CONTROL_SELECT))
+            {
+                apply_drive_touch(x, y, false);  /* 游戏中 MOVE:普通模式实时更新转向 */
+            }
         }
     }
 }
@@ -392,31 +331,45 @@ void racing_input_poll(void)
 RacingInput racing_input_get(void)
 {
     RacingInput input;
+
     update_gpio_buttons();
     input = g_input;
-    /* 一次性标志取走即清。 */
+    /* 游戏中(g_menu_screen<0)boost 按模式决定(车自动前进,accelerate 由主循环强制):
+     * 普通模式 = 中间 1/3 切换的开关;体感模式 = 按住屏幕。
+     * 注意:不能用 ==0 判驾驶——RACING_MODE_START 恰好==0,会跟主菜单冲突。 */
+    if (g_menu_screen < 0)
+    {
+        input.boost = (g_drive_mode == 1) ? g_touch_down : g_boost_on;
+    }
+    /* 一次性标志取走即清;转向是持续态,由触摸 UP 清。 */
     g_input.start = false;
     g_input.pause = false;
     g_input.restart = false;
+    g_input.mapSelect = false;
+    g_input.controlSelect = false;
+    g_input.back = false;
+    g_input.cyclePrev = false;
+    g_input.cycleNext = false;
+    g_input.toMenu = false;
+    g_input.ctrl1 = false;
+    g_input.ctrl2 = false;
+    g_input.ctrl3 = false;
     return input;
 }
 
-RacingMenuSelection racing_input_get_menu_selection(void)
+void racing_input_set_menu_screen(int mode)
 {
-    RacingMenuSelection selection = g_menu_selection;
-    g_menu_selection = RACING_MENU_NONE;
-    return selection;
+    g_menu_screen = mode;
 }
 
-bool racing_input_get_touch_boost(void)
+void racing_input_set_drive_mode(int gyro)
 {
-    refresh_touch_boost();
-    return g_touch_boost;
+    g_drive_mode = gyro ? 1 : 0;
 }
 
 void racing_input_reset(void)
 {
     memset(&g_input, 0, sizeof(g_input));
-    g_menu_selection = RACING_MENU_NONE;
-    clear_touch_boost();
+    g_boost_on = false;
+    g_touch_down = false;
 }

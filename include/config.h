@@ -14,7 +14,7 @@
 #endif
 
 #ifndef RACING_MAP_COUNT
-/* 固定地图数量：0=环形 1=宽直道 2=Z/S交叉10次。 */
+/* 固定地图数量：0=简单 1=中等 2=困难（分段随机蜿蜒赛道）。 */
 #define RACING_MAP_COUNT 3
 #endif
 

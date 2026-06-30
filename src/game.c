@@ -69,79 +69,32 @@ static Road make_road(float x, float y, float z)
 }
 
 /* 赛道是预先生成好的离散段，曲线和起伏都固定在这张表里。 */
-/* 横向偏移 x 由每段 curve 累加得到，最后统一 *45 缩放成世界坐标。 */
-
-/* 地图0 环形：整条赛道走 2 圈连续正弦，平滑大弯且首尾相接成闭环。 */
-static void build_track_ring(Road roads[ROAD_COUNT])
+static void build_track(Road roads[ROAD_COUNT])
 {
-    const float two_pi = 6.2831853f;
-    const float amp = 0.6f;
-    const int loops = 2;
     float x = 0.0f;
 
     for (int i = 0; i < ROAD_COUNT; i++)
     {
-        x += amp * sinf(two_pi * loops * (float)i / (float)ROAD_COUNT);
-        roads[i] = make_road(x * 45.0f, 0.0f, (float)((1 + i) * SEG_LENGTH));
-    }
-}
-
-/* 地图1 宽直道：curve 恒为 0，纯平直路；路面宽度在 set_map 里调宽。 */
-static void build_track_straight(Road roads[ROAD_COUNT])
-{
-    for (int i = 0; i < ROAD_COUNT; i++)
-    {
-        roads[i] = make_road(0.0f, 0.0f, (float)((1 + i) * SEG_LENGTH));
-    }
-}
-
-/* 地图2 Z/S 交叉10次：20 段交替。每段用一个完整正弦周期驱动 curve
- * （恒定 curve 会让 x、z 同比线性增长，投影成直线看不出弯；正弦 curve 使
- * x 超线性增长，路面才显出弯）。Z 段振幅大=急弯，S 段振幅小=缓弯；完整
- * 周期净偏移为零，赛道不会整体漂走。 */
-static void build_track_zigzag(Road roads[ROAD_COUNT])
-{
-    const int sections = 20;          /* 10 段 Z + 10 段 S */
-    const int secLen = ROAD_COUNT / sections;
-    const float two_pi = 6.2831853f;
-    float x = 0.0f;
-
-    for (int i = 0; i < ROAD_COUNT; i++)
-    {
-        int section = i / secLen;
-        float t = (float)(i % secLen) / (float)secLen;   /* 段内 0..1 */
         float curve;
+        int y = 0;
 
-        if (section % 2 == 0)
+        if (i <= 123 || (456 < i && i <= 789) || (1234 < i && i <= 1721))
         {
-            /* Z 形：大振幅完整正弦周期，先急转再回拐。 */
-            curve = 2.5f * sinf(two_pi * t);
+            curve = 0.5f;
         }
         else
         {
-            /* S 形：小振幅完整正弦周期，平滑缓弯。 */
-            curve = 1.0f * sinf(two_pi * t);
+            curve = -0.5f;
         }
 
         x += curve;
-        roads[i] = make_road(x * 45.0f, 0.0f, (float)((1 + i) * SEG_LENGTH));
-    }
-}
 
-static void build_track(Road roads[ROAD_COUNT], int mapIndex)
-{
-    switch (mapIndex)
-    {
-    case 1:
-        build_track_straight(roads);
-        break;
-    case 2:
-        build_track_zigzag(roads);
-        break;
-    case 0:
-    default:
-        build_track_ring(roads);
-        break;
+        if (i > 300 && i < 1240)
+        {
+            y = (int)(1600.0f * sinf(i / 30.0f - 10.0f));
+        }
+
+        roads[i] = make_road(x * 45.0f, (float)y, (float)((1 + i) * SEG_LENGTH));
     }
 }
 
@@ -154,7 +107,6 @@ static Nailong make_nailong(float x, float y, float z)
     nailong.p[2] = make_point(x + 1200.0f, y + 1800.0f, z);
     nailong.p[3] = make_point(x, y + 1800.0f, z);
     nailong.eaten = false;
-    nailong.respawnMs = 0;
     return nailong;
 }
 
@@ -168,10 +120,66 @@ static void project_nailong(Nailong *nailong, const ProjectionContext *context)
 }
 
 /* 奶龙重生到指定赛段附近，位置保留一点随机性。 */
-static void reset_nailong(Nailong *nailong, const Road *road, float width)
+static void reset_nailong(Nailong *nailong, const Road *road)
 {
-    float x = road->x - width / 2.0f + (float)(rand() % 1500);
+    float x = road->x - ROAD_WIDTH / 2.0f + (float)(rand() % 1500);
     *nailong = make_nailong(x, road->y, road->z);
+}
+
+/* 树是路边纯装饰精灵。只存世界中心 x + 赛段；屏幕四角在投影时按贴地 billboard 计算。 */
+static Tree make_tree(float centerWorldX, int segment)
+{
+    Tree tree;
+    tree.centerWorldX = centerWorldX;
+    tree.segment = segment;
+    tree.segDist = 0;
+    tree.visible = false;
+    return tree;
+}
+
+/* 在空气墙外随机种树：随机赛段/左右/离墙距离，整棵树都落在路外(无需碰撞)。
+ * 存树中心的世界 x(路中心 ± (墙距+随机+半宽))，左右对称。 */
+static void build_trees(RacingGame *game)
+{
+    for (int i = 0; i < TREE_COUNT; i++)
+    {
+        int segment = rand() % ROAD_COUNT;
+        int side = (rand() & 1) ? 1 : -1;
+        int beyond = TREE_MIN_BEYOND + rand() % TREE_SPREAD;
+        const Road *road = &game->roads[segment];
+        float centerWorldX = road->x + side * (AIR_WALL_HALF + (float)beyond + TREE_WORLD_W / 2.0f);
+
+        game->trees[i] = make_tree(centerWorldX, segment);
+    }
+}
+
+/* 房子是路边立体盒子装饰，只存世界中心 x + 赛段 + 类型 + 朝向；屏幕四角投影时算。 */
+static House make_house(float centerWorldX, int segment, int type, int side)
+{
+    House house;
+    house.centerWorldX = centerWorldX;
+    house.segment = segment;
+    house.type = type;
+    house.side = side;
+    house.segDist = 0;
+    house.visible = false;
+    return house;
+}
+
+/* 在空气墙外随机种房子：随机赛段/左右/类型/离墙距离，整栋落在路外(无需碰撞)。 */
+static void build_houses(RacingGame *game)
+{
+    for (int i = 0; i < HOUSE_COUNT; i++)
+    {
+        int segment = rand() % ROAD_COUNT;
+        int side = (rand() & 1) ? 1 : -1;
+        int type = rand() & 1;
+        int beyond = HOUSE_MIN_BEYOND + rand() % HOUSE_SPREAD;
+        const Road *road = &game->roads[segment];
+        float centerWorldX = road->x + side * (AIR_WALL_HALF + (float)beyond + HOUSE_WORLD_W / 2.0f);
+
+        game->houses[i] = make_house(centerWorldX, segment, type, side);
+    }
 }
 
 /* 纯判定函数：这里只负责判断是否撞到奶龙。 */
@@ -195,7 +203,7 @@ static bool collect_nailong(Nailong *nailong, int camX, int camZ)
 }
 
 /* 每局开始时重新分配奶龙位置，让三次收集节奏更均匀。 */
-static void reset_collectibles(Nailong nailongs[COLLECTIBLE_COUNT], const Road roads[ROAD_COUNT], int positions[COLLECTIBLE_COUNT], float width)
+static void reset_collectibles(Nailong nailongs[COLLECTIBLE_COUNT], const Road roads[ROAD_COUNT], int positions[COLLECTIBLE_COUNT])
 {
     positions[0] = rand() % 500 + 200;
     positions[1] = rand() % 500 + 700;
@@ -203,7 +211,7 @@ static void reset_collectibles(Nailong nailongs[COLLECTIBLE_COUNT], const Road r
 
     for (int i = 0; i < COLLECTIBLE_COUNT; i++)
     {
-        reset_nailong(&nailongs[i], &roads[positions[i]], width);
+        reset_nailong(&nailongs[i], &roads[positions[i]]);
     }
 }
 
@@ -232,6 +240,8 @@ static void reset_runtime_state(RacingGame *game)
     game->turnRight = false;
     game->isOut = false;
     game->isFlying = false;
+    game->wallHitFrames = 0;
+    game->wallHitSide = 0;
 }
 
 /* 摄像机高度贴着当前路面走，飞行状态则独立抬高。 */
@@ -259,31 +269,15 @@ static void refresh_camera_height(RacingGame *game)
     }
 }
 
-/* 奶龙被吃到后补能量，并触发短暂跳脸反馈。
- * 地图“一路邮你”collectibleRespawnMs 较小：校徽被吃后很快在前方重生，
- * 刷新频率更高。其它地图 respawnMs=0，不重生（维持一局 N 个）。 */
-static void update_collectibles(RacingGame *game, int deltaMs)
+/* 奶龙被吃到后补能量，并触发短暂跳脸反馈。 */
+static void update_collectibles(RacingGame *game)
 {
-    int startSeg = racing_game_start_segment(game);
-
     for (int i = 0; i < COLLECTIBLE_COUNT; i++)
     {
-        Nailong *n = &game->collectibles[i];
-        if (collect_nailong(n, game->camX, game->camZ))
+        if (collect_nailong(&game->collectibles[i], game->camX, game->camZ))
         {
             game->energy += 100;
             game->hitFrames = 15;
-            n->respawnMs = game->collectibleRespawnMs;
-        }
-        else if (n->eaten && n->respawnMs > 0)
-        {
-            n->respawnMs -= deltaMs;
-            if (n->respawnMs <= 0)
-            {
-                int ahead = (startSeg + 80) % ROAD_COUNT;
-                reset_nailong(n, &game->roads[ahead], game->roadWidth);
-                game->collectiblePositions[i] = ahead;
-            }
         }
     }
 }
@@ -295,7 +289,7 @@ static void update_lap(RacingGame *game)
     {
         game->camZ -= TRACK_LENGTH;
         game->lap++;
-        reset_collectibles(game->collectibles, game->roads, game->collectiblePositions, game->roadWidth);
+        reset_collectibles(game->collectibles, game->roads, game->collectiblePositions);
 
         if (game->lap >= 3)
         {
@@ -307,6 +301,42 @@ static void update_lap(RacingGame *game)
     if (game->camZ < 0)
     {
         game->camZ += TRACK_LENGTH;
+    }
+}
+
+/* 空气墙：把车钳制在路缘外侧的硬边界内，撞墙则向内弹回 + 扣能量 + 触发反馈。
+ * 放在移动之后用当前赛段中心判定，飞行状态同样受这套约束。 */
+static void apply_air_wall(RacingGame *game, int start)
+{
+    int centerX = game->roads[start].x;
+    int leftWall = (int)(centerX - AIR_WALL_HALF);
+    int rightWall = (int)(centerX + AIR_WALL_HALF);
+    int side = 0;
+
+    if (game->camX <= leftWall)
+    {
+        game->camX = leftWall + AIR_WALL_BOUNCE;
+        side = -1;
+    }
+    else if (game->camX >= rightWall)
+    {
+        game->camX = rightWall - AIR_WALL_BOUNCE;
+        side = 1;
+    }
+
+    if (side != 0)
+    {
+        game->wallHitSide = side;
+        game->wallHitFrames = AIR_WALL_FEEDBACK_FRAMES;
+        game->energy -= AIR_WALL_ENERGY_COST;
+        if (game->energy < 0)
+        {
+            game->energy = 0;
+        }
+    }
+    else if (game->wallHitFrames > 0)
+    {
+        game->wallHitFrames--;
     }
 }
 
@@ -336,16 +366,14 @@ static void update_movement(RacingGame *game, const RacingInput *input)
         game->turnRight = false;
     }
 
-    /* 转向角夹在 ±1.4 弧度(约 80°)：远大于旧的 1rad，但低于 90° 退化区。
-     * 一旦 |angle| >= 90°，前方路面的投影深度 tz 会变负、被夹成 0.1，
-     * 整条路塌缩成一点 → 旋转后空屏。所以允许大幅转向但不许转到面朝后。 */
-    if (game->angle > 1.4f)
+    if (game->angle > 1.0f)
     {
-        game->angle = 1.4f;
+        game->angle = 1.0f;
     }
-    if (game->angle < -1.4f)
+
+    if (game->angle < -1.0f)
     {
-        game->angle = -1.4f;
+        game->angle = -1.0f;
     }
 
     forwardCos = cosf(-game->angle);
@@ -421,63 +449,11 @@ void racing_game_init(RacingGame *game, unsigned int seed)
     }
 
     srand(seed);
-    game->mapIndex = 0;
-    game->roadWidth = (float)ROAD_WIDTH;
-    game->collectibleRespawnMs = 0;
-    build_track(game->roads, game->mapIndex);
+    build_track(game->roads);
+    build_trees(game);
+    build_houses(game);
     reset_runtime_state(game);
-    reset_collectibles(game->collectibles, game->roads, game->collectiblePositions, game->roadWidth);
-}
-
-/* 切换地图：重建赛道表 + 按地图设路宽/收集物重生间隔 + 重置运行时状态。 */
-void racing_game_set_map(RacingGame *game, int mapIndex)
-{
-    if (game == NULL)
-    {
-        return;
-    }
-
-    if (mapIndex < 0 || mapIndex >= RACING_MAP_COUNT)
-    {
-        mapIndex = 0;
-    }
-
-    game->mapIndex = mapIndex;
-    /* 地图1（一路邮你）路面更宽 + 校徽被吃后 1.2s 在前方重生（刷新更快）；其余默认。 */
-    game->roadWidth = (mapIndex == 1) ? (float)ROAD_WIDTH * 1.8f : (float)ROAD_WIDTH;
-    game->collectibleRespawnMs = (mapIndex == 1) ? 1200 : 0;
-    build_track(game->roads, mapIndex);
-    reset_runtime_state(game);
-    reset_collectibles(game->collectibles, game->roads, game->collectiblePositions, game->roadWidth);
-}
-
-const char *racing_game_map_name(int mapIndex)
-{
-    switch (mapIndex)
-    {
-    case 1:
-        return "一路邮你";
-    case 2:
-        return "Z/S x10";
-    case 0:
-    default:
-        return "Ring";
-    }
-}
-
-/* 板端点阵字体只有 ASCII，中文显示不了，给嵌入式 UI 用 ASCII 回退名。 */
-const char *racing_game_map_name_ascii(int mapIndex)
-{
-    switch (mapIndex)
-    {
-    case 1:
-        return "BUPT";
-    case 2:
-        return "Z/S x10";
-    case 0:
-    default:
-        return "Ring";
-    }
+    reset_collectibles(game->collectibles, game->roads, game->collectiblePositions);
 }
 
 void racing_game_reset_to_start(RacingGame *game)
@@ -488,7 +464,7 @@ void racing_game_reset_to_start(RacingGame *game)
     }
 
     reset_runtime_state(game);
-    reset_collectibles(game->collectibles, game->roads, game->collectiblePositions, game->roadWidth);
+    reset_collectibles(game->collectibles, game->roads, game->collectiblePositions);
 }
 
 void racing_game_start(RacingGame *game)
@@ -500,7 +476,7 @@ void racing_game_start(RacingGame *game)
 
     reset_runtime_state(game);
     game->mode = RACING_MODE_PLAYING;
-    reset_collectibles(game->collectibles, game->roads, game->collectiblePositions, game->roadWidth);
+    reset_collectibles(game->collectibles, game->roads, game->collectiblePositions);
 }
 
 void racing_game_update(RacingGame *game, const RacingInput *input, int deltaMs)
@@ -520,59 +496,6 @@ void racing_game_update(RacingGame *game, const RacingInput *input, int deltaMs)
     {
         racing_game_reset_to_start(game);
         racing_game_start(game);
-        return;
-    }
-
-    /* 1/2/3 任意时刻都可换图（切到不同的图才动作）。
-     * 开始页切换→停在开始页；游戏中切换→直接从新图起点继续跑。 */
-    if (localInput.map1 || localInput.map2 || localInput.map3)
-    {
-        int target = localInput.map1 ? 0 : (localInput.map2 ? 1 : 2);
-        if (target != game->mapIndex)
-        {
-            RacingMode prevMode = game->mode;
-            racing_game_set_map(game, target); /* 重建赛道，重置到起点 */
-            if (prevMode == RACING_MODE_PLAYING || prevMode == RACING_MODE_PAUSED)
-            {
-                game->mode = RACING_MODE_PLAYING; /* 游戏中换图：直接继续跑 */
-            }
-            else if (prevMode == RACING_MODE_MAP_SELECT)
-            {
-                game->mode = RACING_MODE_MAP_SELECT; /* 选图界面里换图：留在选图界面 */
-            }
-            return;
-        }
-    }
-
-    /* 开始界面 → 进入地图选择界面。 */
-    if (localInput.mapSelect && game->mode == RACING_MODE_START)
-    {
-        game->mode = RACING_MODE_MAP_SELECT;
-        return;
-    }
-
-    /* 地图选择界面：左右循环切图（全程预览），Enter/点击进游戏，Esc 返回。 */
-    if (game->mode == RACING_MODE_MAP_SELECT)
-    {
-        if (localInput.cyclePrev || localInput.cycleNext)
-        {
-            int target = localInput.cycleNext
-                             ? (game->mapIndex + 1) % RACING_MAP_COUNT
-                             : (game->mapIndex + RACING_MAP_COUNT - 1) % RACING_MAP_COUNT;
-            racing_game_set_map(game, target);
-            game->mode = RACING_MODE_MAP_SELECT;
-            return;
-        }
-        if (localInput.start)
-        {
-            racing_game_start(game);
-            return;
-        }
-        if (localInput.back || localInput.pause)
-        {
-            game->mode = RACING_MODE_START;
-            return;
-        }
         return;
     }
 
@@ -611,18 +534,94 @@ void racing_game_update(RacingGame *game, const RacingInput *input, int deltaMs)
 
     game->elapsedMs += deltaMs > 0 ? deltaMs : 0;
     update_movement(game, &localInput);
-    update_collectibles(game, deltaMs);
+    update_collectibles(game);
     update_lap(game);
     refresh_camera_height(game);
 
     start = racing_game_start_segment(game);
-    game->isOut = game->camX >= game->roads[start].x + game->roadWidth / 1.5f ||
-                  game->camX <= game->roads[start].x - game->roadWidth / 1.5f;
+    game->isOut = game->camX >= game->roads[start].x + ROAD_WIDTH / 1.5f ||
+                  game->camX <= game->roads[start].x - ROAD_WIDTH / 1.5f;
+
+    apply_air_wall(game, start);
 
     context = make_projection_context(game->camX, game->camY, game->camZ, game->angle);
     for (int i = 0; i < COLLECTIBLE_COUNT; i++)
     {
         project_nailong(&game->collectibles[i], &context);
+    }
+
+    /* 路边树：只投影视野内的，并处理赛道首尾相接的环绕(跨过终点线时远端树要算到前方)。
+     * 树按贴地 billboard 锚定：纵向用本赛段路中心的深度/缩放定位(避免树因侧向偏移
+     * 导致的深度失真而"飘")，横向按路宽 W 偏移，并叠加转向倾角(bankAngle，对齐
+     * render_fb.c::render_track)让树跟着路面一起倾斜。 */
+    float bankAngle = game->turnLeft ? -0.2f : game->turnRight ? 0.2f : 0.0f;
+    float cosBank = cosf(bankAngle);
+    float sinBank = sinf(bankAngle);
+
+    for (int i = 0; i < TREE_COUNT; i++)
+    {
+        Tree *tree = &game->trees[i];
+        int segDist = (tree->segment - start + ROAD_COUNT) % ROAD_COUNT;
+        tree->segDist = segDist;
+        tree->visible = (segDist > 0 && segDist <= VIEW_DISTANCE);
+        if (!tree->visible)
+        {
+            continue;
+        }
+
+        ProjectionContext treeCtx = context;
+        treeCtx.camZ = game->camZ - ((start + segDist >= ROAD_COUNT) ? TRACK_LENGTH : 0);
+
+        Point ground = make_point(game->roads[tree->segment].x,
+                                  game->roads[tree->segment].y,
+                                  game->roads[tree->segment].z);
+        project_point(&ground, &treeCtx);
+
+        float roadW = ground.scale * ROAD_WIDTH * WIN_WIDTH / 2.0f;
+        float lateral = (tree->centerWorldX - ground.x) / ROAD_WIDTH;   /* 路宽倍数，带符号 */
+        float baseX = ground.X + lateral * roadW * cosBank;
+        float baseY = ground.Y + lateral * roadW * sinBank;
+        float sw = (TREE_WORLD_W / ROAD_WIDTH) * roadW;
+        float sh = ground.scale * TREE_WORLD_H * WIN_HEIGHT / 2.0f;
+
+        tree->p[0].X = baseX - sw / 2.0f; tree->p[0].Y = baseY;      tree->p[0].tz = ground.tz;
+        tree->p[1].X = baseX + sw / 2.0f; tree->p[1].Y = baseY;      tree->p[1].tz = ground.tz;
+        tree->p[2].X = baseX + sw / 2.0f; tree->p[2].Y = baseY - sh; tree->p[2].tz = ground.tz;
+        tree->p[3].X = baseX - sw / 2.0f; tree->p[3].Y = baseY - sh; tree->p[3].tz = ground.tz;
+    }
+
+    /* 路边房子：和树一样贴地 billboard(路中心深度定位纵向 + bankAngle 倾角)，
+     * 处理环形接缝；区别只是用 HOUSE 尺寸。 */
+    for (int i = 0; i < HOUSE_COUNT; i++)
+    {
+        House *house = &game->houses[i];
+        int segDist = (house->segment - start + ROAD_COUNT) % ROAD_COUNT;
+        house->segDist = segDist;
+        house->visible = (segDist > 0 && segDist <= VIEW_DISTANCE);
+        if (!house->visible)
+        {
+            continue;
+        }
+
+        ProjectionContext houseCtx = context;
+        houseCtx.camZ = game->camZ - ((start + segDist >= ROAD_COUNT) ? TRACK_LENGTH : 0);
+
+        Point ground = make_point(game->roads[house->segment].x,
+                                  game->roads[house->segment].y,
+                                  game->roads[house->segment].z);
+        project_point(&ground, &houseCtx);
+
+        float roadW = ground.scale * ROAD_WIDTH * WIN_WIDTH / 2.0f;
+        float lateral = (house->centerWorldX - ground.x) / ROAD_WIDTH;
+        float baseX = ground.X + lateral * roadW * cosBank;
+        float baseY = ground.Y + lateral * roadW * sinBank;
+        float sw = (HOUSE_WORLD_W / ROAD_WIDTH) * roadW;
+        float sh = ground.scale * HOUSE_WORLD_H * WIN_HEIGHT / 2.0f;
+
+        house->p[0].X = baseX - sw / 2.0f; house->p[0].Y = baseY;      house->p[0].tz = ground.tz;
+        house->p[1].X = baseX + sw / 2.0f; house->p[1].Y = baseY;      house->p[1].tz = ground.tz;
+        house->p[2].X = baseX + sw / 2.0f; house->p[2].Y = baseY - sh; house->p[2].tz = ground.tz;
+        house->p[3].X = baseX - sw / 2.0f; house->p[3].Y = baseY - sh; house->p[3].tz = ground.tz;
     }
 
     if (game->hitFrames > 0)

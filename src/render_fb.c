@@ -76,8 +76,9 @@ struct RacingFbView {
     RacingImg *img_mtn_far;
     RacingImg *img_mtn_near;
     RacingImg *img_cloud;
-    RacingImg *img_nailong_bupt;   /* 地图“一路邮你”：北邮校徽收集物 */
-    RacingImg *img_bg_bupt;        /* 地图“一路邮你”：北邮校门背景 */
+    RacingImg *img_tree;
+    RacingImg *img_house0;    /* 小楼(正面) */
+    RacingImg *img_house1;    /* 神庙盒(正面) */
 };
 
 /****************************************************************************
@@ -527,7 +528,7 @@ static ProjectionContext make_projection_context(int camX, int camY, int camZ, f
     return ctx;
 }
 
-static void project_road(Road *road, const ProjectionContext *ctx, float roadWidth)
+static void project_road(Road *road, const ProjectionContext *ctx)
 {
     road->tx = (road->x - ctx->camX) * ctx->cosAngle + (road->z - ctx->camZ) * ctx->sinAngle;
     road->tz = -(road->x - ctx->camX) * ctx->sinAngle + (road->z - ctx->camZ) * ctx->cosAngle;
@@ -539,7 +540,7 @@ static void project_road(Road *road, const ProjectionContext *ctx, float roadWid
     road->scale = 1.0f / road->tz;
     road->X = (1.0f + road->scale * road->tx) * WIN_WIDTH / 2.0f;
     road->Y = (1.0f - road->scale * (road->y - ctx->camY)) * WIN_HEIGHT / 2.0f;
-    road->W = road->scale * roadWidth * WIN_WIDTH / 2.0f;
+    road->W = road->scale * ROAD_WIDTH * WIN_WIDTH / 2.0f;
 }
 
 static void project_world_point(float x, float y, float z, const ProjectionContext *ctx, FbPoint *point)
@@ -608,10 +609,10 @@ static void draw_world_rect(RacingFbView *v, uint32_t color, float x1, float y1,
 }
 
 /* 终点旗门：两根红柱 + 黑白方格旗面。 */
-static void draw_finish_flag(RacingFbView *v, const Road *road, const ProjectionContext *ctx, float roadWidth)
+static void draw_finish_flag(RacingFbView *v, const Road *road, const ProjectionContext *ctx)
 {
     float z = road->z;
-    float halfWidth = roadWidth * 0.78f;
+    float halfWidth = ROAD_WIDTH * 0.78f;
     float leftX = road->x - halfWidth;
     float rightX = road->x + halfWidth;
     float poleWidth = 140.0f;
@@ -667,7 +668,7 @@ static void render_track(RacingFbView *v)
     float bankAngle = game->turnLeft ? -0.2f : game->turnRight ? 0.2f : 0.0f;
 
     context.camZ = game->camZ - farWrap;
-    project_road(&farRoad, &context, game->roadWidth);
+    project_road(&farRoad, &context);
 
     for (int offset = VIEW_DISTANCE; offset > 0; offset--) {
         int segment = start + offset;
@@ -678,7 +679,7 @@ static void render_track(RacingFbView *v)
         uint32_t road = segment % 2 ? COL_ROAD_DK : COL_ROAD_LT;
 
         context.camZ = game->camZ - nearWrap;
-        project_road(&nearRoad, &context, game->roadWidth);
+        project_road(&nearRoad, &context);
 
         if ((farRoad.Y >= WIN_HEIGHT && nearRoad.Y >= WIN_HEIGHT) ||
             (farRoad.Y < -WIN_HEIGHT && nearRoad.Y < -WIN_HEIGHT)) {
@@ -692,7 +693,7 @@ static void render_track(RacingFbView *v)
         draw_road_band(v, &farRoad, &nearRoad, 1.0f, bankAngle, road);
 
         if (segmentIndex == ROAD_COUNT - 1) {
-            draw_finish_flag(v, &game->roads[ROAD_COUNT - 1], &context, game->roadWidth);
+            draw_finish_flag(v, &game->roads[ROAD_COUNT - 1], &context);
         }
 
         farRoad = nearRoad;
@@ -763,16 +764,85 @@ static void render_collectibles(RacingFbView *v)
             continue;
         }
 
-        /* 地图“一路邮你”用北邮校徽，其余用奶龙贴图；都没有则画几何奶龙。 */
-        {
-            RacingImg *sprite = (game->mapIndex == 1 && v->img_nailong_bupt != NULL)
-                                    ? v->img_nailong_bupt
-                                    : v->img_nailong;
-            if (sprite != NULL) {
-                fb_blit_scaled(v, sprite, x, y, w, h);
-            } else {
-                draw_nailong(v, x, y, w, h);
+        if (v->img_nailong != NULL) {
+            fb_blit_scaled(v, v->img_nailong, x, y, w, h);
+        } else {
+            draw_nailong(v, x, y, w, h);
+        }
+    }
+}
+
+/* 路边树(空气墙外装饰):按 segDist 从远到近画,近处遮挡远处;无贴图则跳过。 */
+static void render_trees(RacingFbView *v)
+{
+    const RacingGame *g = v->game;
+
+    if (v->img_tree == NULL) {
+        return;
+    }
+
+    for (int d = VIEW_DISTANCE; d >= 1; d--) {
+        for (int i = 0; i < TREE_COUNT; i++) {
+            const Tree *t = &g->trees[i];
+            int x;
+            int y;
+            int w;
+            int h;
+
+            if (!t->visible || t->segDist != d) {
+                continue;
             }
+
+            x = (int)t->p[0].X;
+            y = (int)t->p[2].Y;
+            w = (int)fabsf(t->p[1].X - t->p[0].X);
+            h = (int)fabsf(t->p[0].Y - t->p[2].Y);
+
+            if (t->p[0].tz <= 0.1f || t->p[1].tz <= 0.1f ||
+                x >= WIN_WIDTH || y >= WIN_HEIGHT || x + w < 0 || y + h < 0) {
+                continue;
+            }
+
+            fb_blit_scaled(v, v->img_tree, x, y, w, h);
+        }
+    }
+}
+
+/* 路边房子(空气墙外,立体盒子):按 segDist 从远到近画。type 选 house0/1,side 选正/镜像。
+ * 贴地 billboard,和树同一套锚定(路中心深度定位纵向 + bankAngle 倾角)。 */
+static void render_houses(RacingFbView *v)
+{
+    const RacingGame *g = v->game;
+
+    for (int d = VIEW_DISTANCE; d >= 1; d--) {
+        for (int i = 0; i < HOUSE_COUNT; i++) {
+            const House *h = &g->houses[i];
+            const RacingImg *img;
+            int x;
+            int y;
+            int w;
+            int hh;
+
+            if (!h->visible || h->segDist != d) {
+                continue;
+            }
+
+            img = (h->type == 0) ? v->img_house0 : v->img_house1;
+            if (img == NULL) {
+                continue;
+            }
+
+            x = (int)h->p[0].X;
+            y = (int)h->p[2].Y;
+            w = (int)fabsf(h->p[1].X - h->p[0].X);
+            hh = (int)fabsf(h->p[0].Y - h->p[2].Y);
+
+            if (h->p[0].tz <= 0.1f || h->p[1].tz <= 0.1f ||
+                x >= WIN_WIDTH || y >= WIN_HEIGHT || x + w < 0 || y + hh < 0) {
+                continue;
+            }
+
+            fb_blit_scaled(v, img, x, y, w, hh);
         }
     }
 }
@@ -784,6 +854,9 @@ static void render_collectibles(RacingFbView *v)
 /* 一条横向视差条带：把 img 缩放到 SKY_DRAW_H 高放在 y，按 camx*factor 水平平铺。
  * 只画天空区(地平线略下),下半屏会被草地/路面覆盖，省掉一半背景开销。 */
 #define SKY_DRAW_H (WIN_HEIGHT / 2 + 20)
+/* 平地默认地平线 Y(camY=2000、~VIEW_DISTANCE 处约 190)。天空装饰以此为锚，
+ * horizon 随起伏/转向上下移动时整组云/山跟着平移，避免山与地面脱节而漂浮。可按观感微调。 */
+#define SKY_HORIZON_REF 190
 
 static void fb_blit_strip(RacingFbView *v, const RacingImg *img, int y, int camx, float factor)
 {
@@ -799,13 +872,32 @@ static void fb_blit_strip(RacingFbView *v, const RacingImg *img, int y, int camx
     fb_blit_scaled(v, img, -off + img->w, y, img->w, SKY_DRAW_H);
 }
 
-/* 天空装饰：云/远山/近山作为全屏高条带，y 偏移与视差因子对齐 SDL。 */
+/* 地平线 Y：最远可见路面(farIndex)的投影 Y，与 render_track 初始 farRoad 一致。 */
+static float sky_horizon_y(RacingFbView *v)
+{
+    const RacingGame *game = v->game;
+    int start = racing_game_start_segment(game);
+    int farIndex = (start + VIEW_DISTANCE) % ROAD_COUNT;
+    int farWrap = (start + VIEW_DISTANCE >= ROAD_COUNT) ? TRACK_LENGTH : 0;
+    ProjectionContext ctx = make_projection_context(game->camX, game->camY, game->camZ, game->angle);
+    Road farRoad = game->roads[farIndex];
+
+    ctx.camZ = game->camZ - farWrap;
+    project_road(&farRoad, &ctx);
+    return farRoad.Y;
+}
+
+/* 天空装饰：云/远山/近山作为全屏高条带，y 偏移与视差因子对齐 SDL。
+ * 纵向按地平线(sky_horizon_y)相对 SKY_HORIZON_REF 的偏移整体平移，跟着远处路面走，
+ * 避免转向/起伏时地平线移动而山固定导致山"漂浮"。 */
 static void render_sky_decor(RacingFbView *v)
 {
     int camx = v->game->camX;
-    fb_blit_strip(v, v->img_cloud, 0, camx, 0.01f);
-    fb_blit_strip(v, v->img_mtn_far, 50, camx, 0.018f);
-    fb_blit_strip(v, v->img_mtn_near, 75, camx, 0.028f);
+    int dy = (int)(sky_horizon_y(v) - SKY_HORIZON_REF);
+
+    fb_blit_strip(v, v->img_cloud, 0 + dy, camx, 0.01f);
+    fb_blit_strip(v, v->img_mtn_far, 50 + dy, camx, 0.018f);
+    fb_blit_strip(v, v->img_mtn_near, 75 + dy, camx, 0.028f);
 }
 
 /* 车内视角:全宽底部,高度可调(纵向压扁,留出更多路面)。 */
@@ -818,16 +910,11 @@ static void render_car(RacingFbView *v)
     }
 }
 
-/* 命中后奶龙跳脸：整屏闪一下。地图“一路邮你”闪北邮校徽。 */
+/* 命中后奶龙跳脸：整屏闪一下。 */
 static void render_hit_flash(RacingFbView *v)
 {
-    if (v->game->hitFrames > 0) {
-        RacingImg *face = (v->game->mapIndex == 1 && v->img_nailong_bupt != NULL)
-                              ? v->img_nailong_bupt
-                              : v->img_head;
-        if (face != NULL) {
-            fb_blit_scaled(v, face, 0, 0, WIN_WIDTH, WIN_HEIGHT);
-        }
+    if (v->game->hitFrames > 0 && v->img_head != NULL) {
+        fb_blit_scaled(v, v->img_head, 0, 0, WIN_WIDTH, WIN_HEIGHT);
     }
 }
 
@@ -879,6 +966,31 @@ static void fb_fill_rect_alpha(RacingFbView *v, int x0, int y0, int x1, int y1,
             uint32_t bb = (b * a + ((dst & 0xff) * ia)) / 255;
             fb_put_native(v, x, y, (rr << 16) | (gg << 8) | bb);
         }
+    }
+}
+
+/* 撞墙反馈：在撞墙一侧画红色半透明边带，alpha 随剩余帧衰减，给冲击感。 */
+static void render_wall_hit(RacingFbView *v)
+{
+    const RacingGame *g = v->game;
+    int edge;
+    int a;
+
+    if (g->wallHitFrames <= 0) {
+        return;
+    }
+
+    edge = WIN_WIDTH / 8;
+    a = g->wallHitFrames * 255 / AIR_WALL_FEEDBACK_FRAMES;
+    if (a > 200) {
+        a = 200;
+    }
+
+    if (g->wallHitSide <= 0) {
+        fb_fill_rect_alpha(v, 0, 0, edge - 1, WIN_HEIGHT - 1, 0xff2020u, (uint8_t)a);
+    }
+    if (g->wallHitSide >= 0) {
+        fb_fill_rect_alpha(v, WIN_WIDTH - edge, 0, WIN_WIDTH - 1, WIN_HEIGHT - 1, 0xff2020u, (uint8_t)a);
     }
 }
 
@@ -983,152 +1095,22 @@ static void render_mode_overlay(RacingFbView *v)
     }
 }
 
-/* 左上角缩略图：把整条赛道（横向偏移 x 沿赛道展开）画成绿线，
- * 红点标当前 camZ 在赛道上的位置。只在 PLAYING/PAUSED 画，约屏幕 1/4×1/4。 */
-static void render_minimap(RacingFbView *v)
-{
-    const RacingGame *g = v->game;
-    enum { W = WIN_WIDTH / 4, H = WIN_HEIGHT / 4, X0 = 4, Y0 = 4, PAD = 6, STEP = 8 };
-    float xmin = 1e30f;
-    float xmax = -1e30f;
-    float xmid;
-    float half;
-
-    if (g->mode != RACING_MODE_PLAYING && g->mode != RACING_MODE_PAUSED) {
-        return;
-    }
-
-    for (int i = 0; i < ROAD_COUNT; i++) {
-        float xv = g->roads[i].x;
-        if (xv < xmin) {
-            xmin = xv;
-        }
-        if (xv > xmax) {
-            xmax = xv;
-        }
-    }
-    xmid = (xmin + xmax) * 0.5f;
-    half = (xmax - xmin) * 0.5f;
-    if (half < 1.0f) {
-        half = 1.0f;   /* 直道：画成水平直线 */
-    }
-
-    /* 半透明底板 + 边框（inclusive 坐标）。 */
-    fb_fill_rect_alpha(v, X0, Y0, X0 + W - 1, Y0 + H - 1, 0x0d1730u, 170);
-    fb_fill_rect(v, X0, Y0, X0 + W - 1, Y0, 0x7f97c7u);
-    fb_fill_rect(v, X0, Y0 + H - 1, X0 + W - 1, Y0 + H - 1, 0x7f97c7u);
-    fb_fill_rect(v, X0, Y0, X0, Y0 + H - 1, 0x7f97c7u);
-    fb_fill_rect(v, X0 + W - 1, Y0, X0 + W - 1, Y0 + H - 1, 0x7f97c7u);
-
-    /* 赛道轮廓：每 STEP 段采样，画成 2px 绿点串（点足够密，视觉上连成线）。 */
-    for (int i = 0; i < ROAD_COUNT; i += STEP) {
-        float t = (float)i / (float)(ROAD_COUNT - 1);
-        float norm = (g->roads[i].x - xmid) / half;
-        int px;
-        int py;
-        if (norm < -1.0f) {
-            norm = -1.0f;
-        }
-        if (norm > 1.0f) {
-            norm = 1.0f;
-        }
-        px = X0 + PAD + (int)(t * (W - 2 * PAD));
-        py = Y0 + H / 2 + (int)(norm * (H / 2 - PAD));
-        fb_fill_rect(v, px, py, px + 1, py + 1, 0x78e68cu);
-    }
-
-    /* 当前位置红点。 */
-    {
-        float prog = (float)g->camZ / (float)TRACK_LENGTH;
-        int seg;
-        int dx;
-        int dy;
-        float norm;
-        if (prog < 0.0f) {
-            prog = 0.0f;
-        }
-        if (prog > 1.0f) {
-            prog = 1.0f;
-        }
-        seg = (int)(prog * (ROAD_COUNT - 1));
-        norm = (g->roads[seg].x - xmid) / half;
-        if (norm < -1.0f) {
-            norm = -1.0f;
-        }
-        if (norm > 1.0f) {
-            norm = 1.0f;
-        }
-        dx = X0 + PAD + (int)(prog * (W - 2 * PAD));
-        dy = Y0 + H / 2 + (int)(norm * (H / 2 - PAD));
-        fb_fill_rect(v, dx - 2, dy - 2, dx + 2, dy + 2, 0xff3c3cu);
-    }
-}
-
-/* 文字 HUD：圈数(红)、时间(青)、能量条、胜利成绩(黄)，左上角缩略图，以及模式面板。 */
+/* 文字 HUD：圈数(红)、时间(青)、能量条、胜利成绩(黄)，以及模式面板。 */
 static void render_hud(RacingFbView *v)
 {
     const RacingGame *g = v->game;
     char buf[64];
 
-    /* HUD 文字挪到顶部居中，给左上角缩略图让位。 */
     snprintf(buf, sizeof(buf), "Lap %d/3", g->lap);
-    fb_draw_text_centered(v, WIN_WIDTH / 2, 6, buf, 0xff2020u);
+    fb_draw_text(v, 8, 8, buf, 0xff2020u);
     snprintf(buf, sizeof(buf), "%ds", g->elapsedMs / 1000);
-    fb_draw_text_centered(v, WIN_WIDTH / 2, 26, buf, 0x00ffffu);
+    fb_draw_text(v, 8, 38, buf, 0x00ffffu);
     render_energy(v, g->energy);
     if (g->mode == RACING_MODE_WIN) {
         snprintf(buf, sizeof(buf), "Win %ds", g->finalSeconds);
-        fb_draw_text_centered(v, WIN_WIDTH / 2, 46, buf, 0xffd647u);
+        fb_draw_text(v, 8, 68, buf, 0xffd647u);
     }
-    render_minimap(v);
     render_mode_overlay(v);
-}
-
-static void render_button(RacingFbView *v, int x, int y, int w, int h,
-                          const char *title, const char *hint, uint32_t color)
-{
-    fb_fill_rect_alpha(v, x, y, x + w - 1, y + h - 1, 0x102342u, 232);
-    fb_fill_rect(v, x, y, x + w - 1, y, color);
-    fb_fill_rect(v, x, y + h - 1, x + w - 1, y + h - 1, color);
-    fb_fill_rect(v, x, y, x, y + h - 1, color);
-    fb_fill_rect(v, x + w - 1, y, x + w - 1, y + h - 1, color);
-    fb_draw_text_centered(v, x + w / 2, y + 10, title, 0xffffffu);
-    fb_draw_text_centered(v, x + w / 2, y + 32, hint, 0xbfd1ffu);
-}
-
-static void render_menu_background(RacingFbView *v)
-{
-    fb_clear(v, COL_SKY);
-    render_sky_decor(v);
-    fb_fill_rect_alpha(v, 0, WIN_HEIGHT / 2, WIN_WIDTH - 1, WIN_HEIGHT - 1,
-                       0x102342u, 70);
-}
-
-static void render_gyro_rows(RacingFbView *v, const Jy60Sample *sample)
-{
-    char buf[96];
-    int y = 72;
-
-    if (sample == NULL || !sample->valid) {
-        fb_draw_text_centered(v, WIN_WIDTH / 2, 126, "Waiting for JY60 data", 0xffffffu);
-        fb_draw_text_centered(v, WIN_WIDTH / 2, 154, "/dev/uart1 9600 8N1", 0xbfd1ffu);
-        return;
-    }
-
-    snprintf(buf, sizeof(buf), "Frames %u", sample->frame_count);
-    fb_draw_text(v, 28, y, buf, 0xbfd1ffu);
-    y += 28;
-    snprintf(buf, sizeof(buf), "ACC  X:%6.2fg Y:%6.2fg Z:%6.2fg",
-             sample->acc_x_g, sample->acc_y_g, sample->acc_z_g);
-    fb_draw_text(v, 28, y, buf, 0xffffffu);
-    y += 28;
-    snprintf(buf, sizeof(buf), "GYRO X:%6.1f Y:%6.1f Z:%6.1f dps",
-             sample->gyro_x_dps, sample->gyro_y_dps, sample->gyro_z_dps);
-    fb_draw_text(v, 28, y, buf, 0xffffffu);
-    y += 28;
-    snprintf(buf, sizeof(buf), "ANGLE R:%6.1f P:%6.1f Y:%6.1f deg",
-             sample->roll_deg, sample->pitch_deg, sample->yaw_deg);
-    fb_draw_text(v, 28, y, buf, 0xffffffu);
 }
 
 /****************************************************************************
@@ -1206,8 +1188,9 @@ RacingFbView *racing_fb_create(RacingGame *game)
     v->img_mtn_far  = img_load("mountain_far.raw");
     v->img_mtn_near = img_load("mountain_near.raw");
     v->img_cloud    = img_load("cloud.raw");
-    v->img_nailong_bupt = img_load("nailong_bupt.raw");
-    v->img_bg_bupt      = img_load("bg_bupt.raw");
+    v->img_tree     = img_load("tree.raw");
+    v->img_house0 = img_load("house0.raw");
+    v->img_house1 = img_load("house1.raw");
 
     return v;
 }
@@ -1223,8 +1206,9 @@ void racing_fb_delete(RacingFbView *v)
     img_free(v->img_mtn_far);
     img_free(v->img_mtn_near);
     img_free(v->img_cloud);
-    img_free(v->img_nailong_bupt);
-    img_free(v->img_bg_bupt);
+    img_free(v->img_tree);
+    img_free(v->img_house0);
+    img_free(v->img_house1);
 
     /* 退出前清屏到黑并推送一次,避免残留在最后一帧、释放显示。 */
     if (v->fbmem != NULL && v->fbmem != MAP_FAILED) {
@@ -1259,16 +1243,14 @@ void racing_fb_render(RacingFbView *v)
     }
 
     t0 = fb_now_ms();
-    /* 背景：地图“一路邮你”用北邮校门照，其余用天空 + 云/山。 */
-    if (v->game->mapIndex == 1 && v->img_bg_bupt != NULL) {
-        fb_blit_scaled(v, v->img_bg_bupt, 0, 0, WIN_WIDTH, WIN_HEIGHT);
-    } else {
-        fb_clear(v, COL_SKY);       /* 背景：整屏天空 */
-        render_sky_decor(v);        /* 云 + 远近山（视差） */
-    }
+    fb_clear(v, COL_SKY);       /* 背景：整屏天空 */
+    render_sky_decor(v);        /* 云 + 远近山（视差） */
     render_track(v);            /* 路面：草地 + 路肩 + 沥青 + 终点旗 */
+    render_trees(v);            /* 路边树(墙外装饰) */
+    render_houses(v);           /* 路边房子(墙外立体盒子) */
     render_collectibles(v);     /* 奶龙（贴图或几何） */
     render_car(v);              /* 车内视角 cockpit */
+    render_wall_hit(v);         /* 撞墙红色边带反馈 */
     render_hud(v);              /* 文字 HUD + 能量条 + 模式面板 */
     render_hit_flash(v);        /* 命中跳脸闪屏(最上层) */
     t1 = fb_now_ms();
@@ -1285,52 +1267,4 @@ void racing_fb_render(RacingFbView *v)
         acc_draw = 0;
         acc_present = 0;
     }
-}
-
-void racing_fb_render_menu(RacingFbView *v)
-{
-    int bw = WIN_WIDTH - 160;
-    int bh = 54;
-    int bx;
-    int by = 88;
-
-    if (v == NULL) {
-        return;
-    }
-
-    if (bw < 220) {
-        bw = WIN_WIDTH - 40;
-    }
-    bx = (WIN_WIDTH - bw) / 2;
-
-    render_menu_background(v);
-    fb_draw_text_centered(v, WIN_WIDTH / 2, 14, "Racing", 0xffffffu);
-    {
-        char mbuf[48];
-        snprintf(mbuf, sizeof(mbuf), "Map: %s",
-                 racing_game_map_name_ascii(v->game->mapIndex));
-        fb_draw_text_centered(v, WIN_WIDTH / 2, 38, mbuf, 0x7fffc0u);
-    }
-    fb_draw_text_centered(v, WIN_WIDTH / 2, 62, "tap top: change map", 0xbfd1ffu);
-    render_button(v, bx, by, bw, bh, "Original Mode", "Touch left / right, GPIO boost", 0x55d37au);
-    by += bh + 18;
-    render_button(v, bx, by, bw, bh, "Gyro Mode", "JY60 arc left / right, touch-hold boost", 0x47a8ffu);
-    by += bh + 18;
-    render_button(v, bx, by, bw, bh, "Test Mode", "Show and print JY60 data", 0xffcc47u);
-    fb_draw_text_centered(v, WIN_WIDTH / 2, WIN_HEIGHT - 28, "JY60 uses /dev/uart1 9600 8N1", 0xbfd1ffu);
-    fb_present(v);
-}
-
-void racing_fb_render_gyro_test(RacingFbView *v, const Jy60Sample *sample)
-{
-    if (v == NULL) {
-        return;
-    }
-
-    render_menu_background(v);
-    fb_draw_text_centered(v, WIN_WIDTH / 2, 24, "JY60 Test", 0xffffffu);
-    fb_draw_text_centered(v, WIN_WIDTH / 2, 48, "Btn1 / center returns to menu", 0xbfd1ffu);
-    fb_fill_rect_alpha(v, 14, 64, WIN_WIDTH - 15, WIN_HEIGHT - 46, 0x0d1730u, 220);
-    render_gyro_rows(v, sample);
-    fb_present(v);
 }

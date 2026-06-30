@@ -31,12 +31,30 @@ typedef struct Road {
 typedef struct Nailong {
     Point p[4];
     bool eaten;
-    int respawnMs;   /* 被吃后到重生前的倒计时；<=0 表示不重生或已就绪 */
 } Nailong;
+
+/* 路边树：纯装饰精灵，种在空气墙外，无需碰撞。投影时按贴地 billboard 计算屏幕四角。 */
+typedef struct Tree {
+    float centerWorldX;   /* 树中心的世界 x，横向定位用 */
+    int segment;          /* 所在赛段，视锥剔除用 */
+    int segDist;          /* 本帧相对摄像机的向前段距(>0 且 <=VIEW_DISTANCE 才可见) */
+    bool visible;         /* 本帧是否在视野内，渲染端读 */
+    Point p[4];           /* 投影后的屏幕四角(渲染端读);p[].tz 用于剔除 */
+} Tree;
+
+/* 路边房子：立体盒子装饰(正面 + 压暗素侧墙合成贴图)，种在空气墙外，无需碰撞。 */
+typedef struct House {
+    float centerWorldX;   /* 房子(正面+侧面整体)中心的世界 x */
+    int segment;          /* 所在赛段，视锥剔除用 */
+    int segDist;          /* 本帧相对摄像机的向前段距 */
+    int type;             /* 0=house_a(小楼)，1=house_b(神庙盒) */
+    int side;             /* +1 路右(正面朝左)，-1 路左(正面朝右，用镜像贴图) */
+    bool visible;         /* 本帧是否在视野内，渲染端读 */
+    Point p[4];           /* 投影后的屏幕四角(贴地 billboard);p[].tz 用于剔除 */
+} House;
 
 typedef enum RacingMode {
     RACING_MODE_START,
-    RACING_MODE_MAP_SELECT,   /* 关卡/地图选择界面 */
     RACING_MODE_PLAYING,
     RACING_MODE_PAUSED,
     RACING_MODE_WIN
@@ -52,19 +70,14 @@ typedef struct RacingInput {
     bool start;
     bool restart;
     bool pause;
-    bool map1;
-    bool map2;
-    bool map3;
-    bool mapSelect;   /* 开始界面 → 进入地图选择 */
-    bool back;        /* 地图选择 → 返回开始界面 */
-    bool cyclePrev;   /* 地图选择：上一张图 */
-    bool cycleNext;   /* 地图选择：下一张图 */
 } RacingInput;
 
 typedef struct RacingGame {
     RacingMode mode;
     Road roads[ROAD_COUNT];
     Nailong collectibles[COLLECTIBLE_COUNT];
+    Tree trees[TREE_COUNT];
+    House houses[HOUSE_COUNT];
     int collectiblePositions[COLLECTIBLE_COUNT];
     int camX;
     int camY;
@@ -81,15 +94,11 @@ typedef struct RacingGame {
     bool turnRight;
     bool isOut;
     bool isFlying;
-    int mapIndex;
-    float roadWidth;
-    int collectibleRespawnMs;   /* 收集物被吃后多久重生(地图2 校徽刷新更快)；0=不重生 */
+    int wallHitFrames;   /* 撞墙反馈剩余帧，渲染端读 */
+    int wallHitSide;     /* -1=撞左墙 +1=撞右墙 0=无，渲染端按侧画红边 */
 } RacingGame;
 
 void racing_game_init(RacingGame *game, unsigned int seed);
-void racing_game_set_map(RacingGame *game, int mapIndex);
-const char *racing_game_map_name(int mapIndex);
-const char *racing_game_map_name_ascii(int mapIndex);
 void racing_game_reset_to_start(RacingGame *game);
 void racing_game_start(RacingGame *game);
 void racing_game_update(RacingGame *game, const RacingInput *input, int deltaMs);

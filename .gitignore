@@ -20,5 +20,6 @@ Make.dep
 *:Zone.Identifier
 .vscode/
 
-#文档
-docs/
+# Python
+__pycache__/
+*.pyc

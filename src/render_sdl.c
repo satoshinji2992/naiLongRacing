@@ -620,17 +620,19 @@ static void draw_mode_overlay(RacingSdlRenderer *view, const RacingGame *game)
             SDL_Rect m = {WIN_WIDTH - 92, 28, 66, 66};
             SDL_RenderCopy(r, view->nailong, NULL, &m);
         }
-        draw_text_centered(r, view->titleFont, "奶龙赛车", 38, titleCol);
-        draw_text_centered(r, font, "NAILONG  RACING", 86, body);
+        draw_text_centered(r, view->titleFont, "NAILONG RACING", 16, titleCol);
+        draw_text_centered(r, font, "voice car assistant", 42, body);
         snprintf(buf, sizeof(buf), "操控 Control: %s",
                  game->menuControlMode == 1 ? "Gyro (JY60)" : "Original (Touch)");
-        draw_text_centered(r, font, buf, 110, (SDL_Color){120, 230, 140, 255});
-        draw_button(r, WIN_WIDTH / 2 - 132, 126, 264, 40, "1   关卡选择  Track", font, body, false);
-        draw_button(r, WIN_WIDTH / 2 - 132, 174, 264, 40, "2   操作选择  Control", font, body, false);
-        draw_button(r, WIN_WIDTH / 2 - 132, 222, 264, 40, "3   网络语音  Network", font, body, false);
+        draw_text_centered(r, font, buf, WIN_HEIGHT - 58, (SDL_Color){120, 230, 140, 255});
+        draw_button(r, WIN_WIDTH / 2 - 160, 56, 320, 48,
+                    game->menuControlMode == 1 ? "START   Gyro" : "START   Original",
+                    font, body, true);
+        draw_button(r, WIN_WIDTH / 2 - 160, 108, 320, 48, "TRACK   Select Track", font, body, false);
+        draw_button(r, WIN_WIDTH / 2 - 160, 160, 320, 48, "CONTROL Select Control", font, body, false);
+        draw_button(r, WIN_WIDTH / 2 - 160, 212, 320, 48, "VOICE   Network / AI Voice", font, body, false);
         snprintf(buf, sizeof(buf), "Voice: %s", voice_state_name_sdl(game->voiceState));
-        draw_text_centered(r, font, buf, WIN_HEIGHT - 54, hint);
-        draw_text_centered(r, font, "1 Track   2 Control   3 Network", WIN_HEIGHT - 30, hint);
+        draw_text_centered(r, font, buf, WIN_HEIGHT - 36, hint);
         return;
     }
 
@@ -655,7 +657,7 @@ static void draw_mode_overlay(RacingSdlRenderer *view, const RacingGame *game)
                  racing_game_map_name_ascii(game->mapIndex));
         draw_text_centered(r, font, buf, ty + th + 12, body);
         draw_difficulty(r, WIN_WIDTH / 2, ty + th + 38, game->mapIndex);
-        draw_text_centered(r, font, "<- -> Switch   Enter Start   Esc Back", WIN_HEIGHT - 24, hint);
+        draw_text_centered(r, font, "<- -> choose   Enter/tap preview start   Backspace back", WIN_HEIGHT - 24, hint);
         return;
     }
 
@@ -671,40 +673,42 @@ static void draw_mode_overlay(RacingSdlRenderer *view, const RacingGame *game)
             draw_button(r, WIN_WIDTH / 2 - 142, 54 + k * 56, 284, 46, names[k], font, body,
                         k == game->menuControlMode);
         }
-        draw_text_centered(r, font, "<- -> Switch   Enter Confirm   Esc Back", WIN_HEIGHT - 24, hint);
+        draw_text_centered(r, font, "Tap a control   Backspace back", WIN_HEIGHT - 24, hint);
         return;
     }
 
     if (game->mode == RACING_MODE_NETWORK_SELECT)
     {
         draw_center_panel(r, 372, 224, (SDL_Color){13, 23, 48, 230}, (SDL_Color){127, 151, 199, 220});
-        draw_text_centered(r, font, "网络语音 — Network / Voice", 28, body);
+        draw_text_centered(r, font, "网络语音 — Network / Voice", 24, body);
         snprintf(buf, sizeof(buf), "Voice: %s", voice_state_name_sdl(game->voiceState));
-        draw_text_centered(r, font, buf, 70, (SDL_Color){120, 230, 140, 255});
-        draw_button(r, WIN_WIDTH / 2 - 142, 108, 284, 46, "Voice bridge starts before Racing", font, body, true);
-        draw_text_centered(r, font, "SSID iphone17 / 12345678", 176, hint);
-        draw_text_centered(r, font, "Esc Back", WIN_HEIGHT - 24, hint);
+        draw_text_centered(r, font, buf, 56, (SDL_Color){120, 230, 140, 255});
+        draw_button(r, WIN_WIDTH / 2 - 160, 82, 320, 48, "START BRIDGE", font, body, true);
+        draw_button(r, WIN_WIDTH / 2 - 160, 138, 320, 48,
+                    game->voiceSpeechEnabled ? "AI VOICE: ON" : "AI VOICE: OFF",
+                    font, body, game->voiceSpeechEnabled);
+        draw_button(r, WIN_WIDTH / 2 - 160, 194, 320, 48, "WIFI  iphone17 / 12345678", font, body, false);
+        draw_button(r, WIN_WIDTH / 2 - 160, 242, 320, 36, "BACK", font, body, false);
         return;
     }
 
     if (game->mode == RACING_MODE_PAUSED)
     {
-        draw_center_panel(r, 300, 168, (SDL_Color){13, 23, 48, 225}, (SDL_Color){127, 151, 199, 220});
+        draw_center_panel(r, 360, 236, (SDL_Color){13, 23, 48, 225}, (SDL_Color){127, 151, 199, 220});
         draw_text_centered(r, view->titleFont, "暂停", 48, titleCol);
-        draw_text_centered(r, font, "Enter to resume", 100, body);
-        draw_text_centered(r, font, "R to restart", 122, hint);
-        draw_text_centered(r, font, "M main menu", 144, (SDL_Color){255, 210, 60, 255});
+        draw_button(r, WIN_WIDTH / 2 - 160, 78, 320, 48, "RESUME", font, body, true);
+        draw_button(r, WIN_WIDTH / 2 - 160, 134, 320, 48, "RESTART", font, body, false);
+        draw_button(r, WIN_WIDTH / 2 - 160, 190, 320, 48, "MAIN MENU", font, body, false);
         return;
     }
 
     if (game->mode == RACING_MODE_WIN)
     {
         snprintf(buf, sizeof(buf), "Finish in %ds", game->finalSeconds);
-        draw_center_panel(r, 300, 168, (SDL_Color){13, 23, 48, 225}, (SDL_Color){127, 151, 199, 220});
+        draw_center_panel(r, 360, 210, (SDL_Color){13, 23, 48, 225}, (SDL_Color){127, 151, 199, 220});
         draw_text_centered(r, view->titleFont, buf, 48, titleCol);
-        draw_text_centered(r, font, "Enter to restart", 100, body);
-        draw_text_centered(r, font, "R to restart", 122, hint);
-        draw_text_centered(r, font, "M main menu", 144, (SDL_Color){255, 210, 60, 255});
+        draw_button(r, WIN_WIDTH / 2 - 160, 116, 320, 48, "RACE AGAIN", font, body, true);
+        draw_button(r, WIN_WIDTH / 2 - 160, 174, 320, 48, "MAIN MENU", font, body, false);
         return;
     }
 }

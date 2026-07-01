@@ -151,6 +151,7 @@ int main(int argc, FAR char *argv[])
 
   racing_input_init();
   racing_voice_init();
+  racing_voice_set_speech_enabled(game.voiceSpeechEnabled);
   jy60_init();
 
   printf("[RACING] running. Select Original / Gyro / Test mode on screen.\n");
@@ -181,7 +182,16 @@ int main(int argc, FAR char *argv[])
 
       /* 菜单屏:按当前 game.mode 映射触摸;游戏/暂停传 -1(驾驶按模式驱动)。
        * 不能传 0:RACING_MODE_START==0,会和主菜单冲突导致游戏中触摸失效。 */
-      racing_input_set_menu_screen(app_mode == RACING_APP_MENU ? (int)game.mode : -1);
+      if (app_mode == RACING_APP_MENU ||
+          game.mode == RACING_MODE_PAUSED ||
+          game.mode == RACING_MODE_WIN)
+        {
+          racing_input_set_menu_screen((int)game.mode);
+        }
+      else
+        {
+          racing_input_set_menu_screen(-1);
+        }
       racing_input_set_drive_mode(app_mode == RACING_APP_GYRO);
       racing_input_poll();
       racing_voice_poll();
@@ -229,6 +239,15 @@ int main(int argc, FAR char *argv[])
               launch_voice_script();
               racing_input_reset();
               racing_fb_render_menu(view);
+            }
+          else if (game.mode == RACING_MODE_NETWORK_SELECT && input.voiceToggle)
+            {
+              game.voiceSpeechEnabled = !game.voiceSpeechEnabled;
+              racing_voice_set_speech_enabled(game.voiceSpeechEnabled);
+              racing_input_reset();
+              racing_fb_render_menu(view);
+              printf("[RACING] AI voice playback %s.\n",
+                     game.voiceSpeechEnabled ? "ON" : "OFF");
             }
           else if ((game.mode == RACING_MODE_START ||
                     game.mode == RACING_MODE_CONTROL_SELECT) && input.ctrl1)

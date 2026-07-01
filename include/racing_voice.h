@@ -9,6 +9,7 @@ void racing_voice_init(void);
 void racing_voice_deinit(void);
 void racing_voice_poll(void);
 void racing_voice_apply_input(RacingInput *input);
+void racing_voice_set_speech_enabled(bool enabled);
 const char *racing_voice_last_text(void);
 int racing_voice_state(void);
 

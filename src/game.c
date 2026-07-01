@@ -254,6 +254,8 @@ static void reset_runtime_state(RacingGame *game)
     game->turnRight = false;
     game->isOut = false;
     game->isFlying = false;
+    game->boosting = false;
+    game->infiniteEnergy = false;
     game->wallHitFrames = 0;
     game->wallHitSide = 0;
 }
@@ -647,6 +649,7 @@ void racing_game_init(RacingGame *game, unsigned int seed)
     game->mapIndex = 0;
     game->menuControlMode = 0;
     game->voiceState = 0;
+    game->voiceSpeechEnabled = false;
     game->infiniteEnergy = false;
     game->voiceText[0] = '\0';
     game->roadWidth = (float)ROAD_WIDTH * g_track_params[0].widthScale;
@@ -773,8 +776,7 @@ void racing_game_update(RacingGame *game, const RacingInput *input, int deltaMs)
         game->energy = 1000;
     }
 
-    /* 1/2/3 任意时刻都可换图（切到不同的图才动作）。
-     * 开始页切换→停在开始页；游戏中切换→直接从新图起点继续跑。 */
+    /* 1/2/3 换关卡：关卡之间不共享局内状态，统一回到新关卡起点。 */
     if (localInput.map1 || localInput.map2 || localInput.map3)
     {
         int target = localInput.map1 ? 0 : (localInput.map2 ? 1 : 2);
@@ -782,11 +784,7 @@ void racing_game_update(RacingGame *game, const RacingInput *input, int deltaMs)
         {
             RacingMode prevMode = game->mode;
             racing_game_set_map(game, target); /* 重建赛道，重置到起点 */
-            if (prevMode == RACING_MODE_PLAYING || prevMode == RACING_MODE_PAUSED)
-            {
-                game->mode = RACING_MODE_PLAYING; /* 游戏中换图：直接继续跑 */
-            }
-            else if (prevMode == RACING_MODE_MAP_SELECT)
+            if (prevMode == RACING_MODE_MAP_SELECT)
             {
                 game->mode = RACING_MODE_MAP_SELECT; /* 选图界面里换图：留在选图界面 */
             }

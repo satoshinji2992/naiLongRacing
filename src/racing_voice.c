@@ -77,10 +77,8 @@ static bool is_nailong_phrase(const char *text)
       return false;
     }
 
-  return strcmp(text, "我是奶龙") == 0 ||
-         strcmp(text, "我是奶龙。") == 0 ||
-         strcmp(text, "我是奶龙！") == 0 ||
-         strcmp(text, "我是奶龙!") == 0;
+  return strstr(text, "我是奶龙") != NULL &&
+         strstr(text, "不是奶龙") == NULL;
 }
 
 static bool is_boost_phrase(const char *text)
@@ -90,10 +88,7 @@ static bool is_boost_phrase(const char *text)
       return false;
     }
 
-  return strcmp(text, "加速") == 0 ||
-         strcmp(text, "加速。") == 0 ||
-         strcmp(text, "加速！") == 0 ||
-         strcmp(text, "加速!") == 0;
+  return strstr(text, "加速") != NULL;
 }
 
 static bool voice_mark_command(const char *text)
@@ -366,6 +361,19 @@ void racing_voice_apply_input(RacingInput *input)
     {
       g_pending_command[0] = '\0';
     }
+}
+
+void racing_voice_set_speech_enabled(bool enabled)
+{
+#if CONFIG_EXAMPLES_RACING_VOICE
+  char msg[48];
+
+  snprintf(msg, sizeof(msg), "{\"type\":\"racing\",\"speech\":%d}",
+           enabled ? 1 : 0);
+  voice_send_state(msg);
+#else
+  (void)enabled;
+#endif
 }
 
 const char *racing_voice_last_text(void)

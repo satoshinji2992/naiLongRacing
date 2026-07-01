@@ -89,6 +89,7 @@ typedef struct RacingInput {
     bool ctrl3;           /* 操作选择:直接选第 3 项(Test) */
     bool nailongCheat;    /* 语音"我是奶龙":开启无限能量作弊 */
     bool voiceBoost;      /* 语音"加速":短时间 boost */
+    bool voiceToggle;     /* 网络/语音设置:切换 AI 语音播放 */
 } RacingInput;
 
 typedef struct RacingGame {
@@ -121,6 +122,7 @@ typedef struct RacingGame {
     float roadWidth;
     int menuControlMode;        /* 操作选择:0=Original 1=Gyro 2=Test */
     int voiceState;             /* 小智/control_center 状态,取值同 racing_voice_state() */
+    bool voiceSpeechEnabled;    /* 是否播放小智 AI 语音回复 */
     char voiceText[64];         /* 最近一条 UI IPC 文本,主菜单显示用 */
     int collectibleRespawnMs;   /* 收集物被吃后多久重生(地图2 校徽刷新更快)；0=不重生 */
 } RacingGame;

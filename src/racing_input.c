@@ -54,28 +54,40 @@ static int g_button_fds[3] = { -1, -1, -1 };
 static bool g_button_prev[3];
 static bool g_gpio_ready;
 
-/* 菜单触摸:按当前菜单屏把落点映射成对应一次性输入(返回走按钮,不用触摸)。 */
+static bool hit_rect(int x, int y, int rx, int ry, int rw, int rh)
+{
+    return x >= rx && x < rx + rw && y >= ry && y < ry + rh;
+}
+
+/* 菜单触摸:按画面上的按钮矩形映射成对应一次性输入。 */
 static void apply_menu_touch(int x, int y)
 {
+    int bw = 320;
+    int bh = 48;
+    int bx = (WIN_WIDTH - bw) / 2;
+
     if (g_menu_screen == RACING_MODE_START)
     {
-        if (y < WIN_HEIGHT / 3)
+        if (hit_rect(x, y, bx, 56, bw, bh))
+        {
+            g_input.start = true;
+        }
+        else if (hit_rect(x, y, bx, 108, bw, bh))
         {
             g_input.mapSelect = true;       /* 上:关卡选择 */
         }
-        else if (y < (WIN_HEIGHT * 2) / 3)
+        else if (hit_rect(x, y, bx, 160, bw, bh))
         {
             g_input.controlSelect = true;   /* 中:操作选择 */
         }
-        else
+        else if (hit_rect(x, y, bx, 212, bw, bh))
         {
             g_input.networkSelect = true;   /* 下:网络/语音 */
         }
     }
-    else if (g_menu_screen == RACING_MODE_MAP_SELECT ||
-             g_menu_screen == RACING_MODE_NETWORK_SELECT)
+    else if (g_menu_screen == RACING_MODE_MAP_SELECT)
     {
-        /* 关卡/网络页:左 < / 右 > / 中间确认。网络页左右暂不动作。 */
+        /* 关卡页:< / > / START 按钮。 */
         if (x < WIN_WIDTH / 3)
         {
             g_input.cyclePrev = true;
@@ -89,20 +101,61 @@ static void apply_menu_touch(int x, int y)
             g_input.start = true;
         }
     }
+    else if (g_menu_screen == RACING_MODE_NETWORK_SELECT)
+    {
+        if (hit_rect(x, y, bx, 82, bw, bh))
+        {
+            g_input.start = true;          /* 手动启动脚本(若配置了) */
+        }
+        else if (hit_rect(x, y, bx, 138, bw, bh))
+        {
+            g_input.voiceToggle = true;    /* AI 语音播放开关 */
+        }
+        else if (hit_rect(x, y, bx, 242, bw, 36))
+        {
+            g_input.back = true;
+        }
+    }
     else if (g_menu_screen == RACING_MODE_CONTROL_SELECT)
     {
         /* 操作选择:点哪个按钮选哪个(Original/Gyro/Test 竖排,按 y 分三段)。 */
-        if (y < 112)
+        if (hit_rect(x, y, bx, 52, bw, 52))
         {
             g_input.ctrl1 = true;
         }
-        else if (y < 176)
+        else if (hit_rect(x, y, bx, 116, bw, 52))
         {
             g_input.ctrl2 = true;
         }
-        else
+        else if (hit_rect(x, y, bx, 180, bw, 52))
         {
             g_input.ctrl3 = true;
+        }
+    }
+    else if (g_menu_screen == RACING_MODE_PAUSED)
+    {
+        if (hit_rect(x, y, bx, 78, bw, bh))
+        {
+            g_input.start = true;
+        }
+        else if (hit_rect(x, y, bx, 134, bw, bh))
+        {
+            g_input.restart = true;
+        }
+        else if (hit_rect(x, y, bx, 190, bw, bh))
+        {
+            g_input.toMenu = true;
+        }
+    }
+    else if (g_menu_screen == RACING_MODE_WIN)
+    {
+        if (hit_rect(x, y, bx, 116, bw, bh))
+        {
+            g_input.start = true;
+        }
+        else if (hit_rect(x, y, bx, 174, bw, bh))
+        {
+            g_input.toMenu = true;
         }
     }
 }
@@ -315,7 +368,9 @@ void racing_input_poll(void)
             if (g_menu_screen == RACING_MODE_START ||
                 g_menu_screen == RACING_MODE_MAP_SELECT ||
                 g_menu_screen == RACING_MODE_CONTROL_SELECT ||
-                g_menu_screen == RACING_MODE_NETWORK_SELECT)
+                g_menu_screen == RACING_MODE_NETWORK_SELECT ||
+                g_menu_screen == RACING_MODE_PAUSED ||
+                g_menu_screen == RACING_MODE_WIN)
             {
                 apply_menu_touch(x, y);
             }
@@ -327,7 +382,9 @@ void racing_input_poll(void)
             if (!(g_menu_screen == RACING_MODE_START ||
                   g_menu_screen == RACING_MODE_MAP_SELECT ||
                   g_menu_screen == RACING_MODE_CONTROL_SELECT ||
-                  g_menu_screen == RACING_MODE_NETWORK_SELECT))
+                  g_menu_screen == RACING_MODE_NETWORK_SELECT ||
+                  g_menu_screen == RACING_MODE_PAUSED ||
+                  g_menu_screen == RACING_MODE_WIN))
             {
                 apply_drive_touch(x, y, false);  /* 游戏中 MOVE:普通模式实时更新转向 */
             }
@@ -364,6 +421,7 @@ RacingInput racing_input_get(void)
     g_input.ctrl3 = false;
     g_input.nailongCheat = false;
     g_input.voiceBoost = false;
+    g_input.voiceToggle = false;
     return input;
 }
 

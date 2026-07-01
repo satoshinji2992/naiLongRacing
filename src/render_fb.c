@@ -1158,6 +1158,68 @@ static void fb_draw_text_centered(RacingFbView *v, int cx, int y, const char *s,
     fb_draw_text(v, cx - fb_text_width(s) / 2, y, s, rgb);
 }
 
+static void fb_draw_text_scaled(RacingFbView *v, int x, int y, const char *s,
+                                int scale, uint32_t rgb)
+{
+    int cx = x;
+
+    if (s == NULL || scale <= 1) {
+        fb_draw_text(v, x, y, s, rgb);
+        return;
+    }
+
+    for (const char *p = s; *p != '\0'; p++) {
+        const uint8_t *glyph = font_glyph((int)(uint8_t)*p);
+        if (glyph != NULL) {
+            for (int py = 0; py < FONT_CELL_H; py++) {
+                for (int px = 0; px < FONT_CELL_W; px++) {
+                    uint8_t a = glyph[py * FONT_CELL_W + px];
+                    if (a != 0) {
+                        uint32_t src = rgb;
+                        uint32_t dst = fb_read_rgb(v, cx + px * scale, y + py * scale);
+                        uint8_t r = (uint8_t)((src >> 16) & 0xff);
+                        uint8_t g = (uint8_t)((src >> 8) & 0xff);
+                        uint8_t b = (uint8_t)(src & 0xff);
+
+                        if (a < 255) {
+                            uint8_t dr = (uint8_t)((dst >> 16) & 0xff);
+                            uint8_t dg = (uint8_t)((dst >> 8) & 0xff);
+                            uint8_t db = (uint8_t)(dst & 0xff);
+                            r = (uint8_t)((r * a + dr * (255 - a)) / 255);
+                            g = (uint8_t)((g * a + dg * (255 - a)) / 255);
+                            b = (uint8_t)((b * a + db * (255 - a)) / 255);
+                        }
+
+                        fb_fill_rect(v, cx + px * scale, y + py * scale,
+                                     cx + (px + 1) * scale - 1,
+                                     y + (py + 1) * scale - 1,
+                                     ((uint32_t)r << 16) | ((uint32_t)g << 8) | b);
+                    }
+                }
+            }
+        }
+        cx += FONT_CELL_W * scale;
+    }
+}
+
+static void fb_draw_text_scaled_centered(RacingFbView *v, int cx, int y,
+                                         const char *s, int scale, uint32_t rgb)
+{
+    fb_draw_text_scaled(v, cx - fb_text_width(s) * scale / 2, y, s, scale, rgb);
+}
+
+static void render_menu_title(RacingFbView *v)
+{
+    const int cx = WIN_WIDTH / 2;
+
+    fb_fill_rect_alpha(v, 82, 4, WIN_WIDTH - 83, 49, 0x0b1830u, 150);
+    fb_fill_rect(v, 104, 7, WIN_WIDTH - 105, 8, 0xffd23cu);
+    fb_fill_rect(v, 124, 46, WIN_WIDTH - 125, 47, 0x47a8ffu);
+    fb_draw_text_scaled_centered(v, cx + 2, 12, "NAILONG RACING", 2, 0x071126u);
+    fb_draw_text_scaled_centered(v, cx, 10, "NAILONG RACING", 2, 0xffd23cu);
+    fb_draw_text_centered(v, cx, 36, "voice car assistant", 0xbfd1ffu);
+}
+
 /* 右下能量条：10 格竖向，空槽 + 已满。 */
 static void render_energy(RacingFbView *v, int energy)
 {
@@ -1190,7 +1252,10 @@ static void render_energy(RacingFbView *v, int energy)
     }
 }
 
-/* 中央模式面板：开始/暂停/胜利时显示提示(触摸版措辞)。 */
+static void render_button(RacingFbView *v, int x, int y, int w, int h,
+                          const char *title, const char *hint, uint32_t color);
+
+/* 中央模式面板：暂停/胜利时显示可触摸按钮。 */
 static void render_mode_overlay(RacingFbView *v)
 {
     const RacingGame *g = v->game;
@@ -1218,16 +1283,21 @@ static void render_mode_overlay(RacingFbView *v)
         fb_draw_text_centered(v, WIN_WIDTH / 2, py + 70, "Tap center to start", body);
         fb_draw_text_centered(v, WIN_WIDTH / 2, py + 96, "Btn1 start / pause", hint);
     } else if (g->mode == RACING_MODE_PAUSED) {
+        int bw = 320;
+        int bh = 48;
+        int bx = (WIN_WIDTH - bw) / 2;
         fb_draw_text_centered(v, WIN_WIDTH / 2, py + 24, "Paused", title);
-        fb_draw_text_centered(v, WIN_WIDTH / 2, py + 64, "center: resume", body);
-        fb_draw_text_centered(v, WIN_WIDTH / 2, py + 86, "top: main menu", 0xffd23cu);
-        fb_draw_text_centered(v, WIN_WIDTH / 2, py + 104, "Btn1 resume", hint);
+        render_button(v, bx, 78, bw, bh, "RESUME", "continue race", 0x55d37au);
+        render_button(v, bx, 134, bw, bh, "RESTART", "restart current track", 0x47a8ffu);
+        render_button(v, bx, 190, bw, bh, "MAIN MENU", "return to menu", 0xffcc47u);
     } else if (g->mode == RACING_MODE_WIN) {
+        int bw = 320;
+        int bh = 48;
+        int bx = (WIN_WIDTH - bw) / 2;
         snprintf(buf, sizeof(buf), "Finish in %ds", g->finalSeconds);
         fb_draw_text_centered(v, WIN_WIDTH / 2, py + 24, buf, title);
-        fb_draw_text_centered(v, WIN_WIDTH / 2, py + 64, "center: restart", body);
-        fb_draw_text_centered(v, WIN_WIDTH / 2, py + 86, "top: main menu", 0xffd23cu);
-        fb_draw_text_centered(v, WIN_WIDTH / 2, py + 104, "Btn1 restart", hint);
+        render_button(v, bx, 116, bw, bh, "RACE AGAIN", "restart current track", 0x55d37au);
+        render_button(v, bx, 174, bw, bh, "MAIN MENU", "return to menu", 0xffcc47u);
     }
 }
 
@@ -1759,7 +1829,7 @@ void racing_fb_render_menu(RacingFbView *v)
         fb_draw_text_centered(v, WIN_WIDTH / 2, ty + th + 12, mbuf, 0x7fffc0u);
         draw_difficulty_fb(v, WIN_WIDTH / 2, ty + th + 36, g->mapIndex);
         fb_draw_text_centered(v, WIN_WIDTH / 2, WIN_HEIGHT - 14,
-                              "< > switch | center START | top BACK", 0xbfd1ffu);
+                              "< > choose | tap preview START | Btn2 BACK", 0xbfd1ffu);
         fb_present(v);
         return;
     }
@@ -1770,7 +1840,7 @@ void racing_fb_render_menu(RacingFbView *v)
         const char *names[3] = {"Original", "Gyro", "Test"};
         const char *hints[3] = {"Touch L/R + GPIO", "JY60 tilt L/R", "Show JY60 data"};
         uint32_t col[3] = {0x55d37au, 0x47a8ffu, 0xffcc47u};
-        int bw = 300;
+        int bw = 320;
         int bh = 52;
         int bx = (WIN_WIDTH - bw) / 2;
         int k;
@@ -1783,7 +1853,7 @@ void racing_fb_render_menu(RacingFbView *v)
             render_button(v, bx, 52 + k * (bh + 12), bw, bh, t, hints[k], c);
         }
         fb_draw_text_centered(v, WIN_WIDTH / 2, WIN_HEIGHT - 14,
-                              "< > switch | center OK | top BACK", 0xbfd1ffu);
+                              "tap a control | Btn2 BACK", 0xbfd1ffu);
         fb_present(v);
         return;
     }
@@ -1791,49 +1861,48 @@ void racing_fb_render_menu(RacingFbView *v)
     if (g->mode == RACING_MODE_NETWORK_SELECT)
     {
         int bw = 320;
-        int bh = 56;
+        int bh = 48;
         int bx = (WIN_WIDTH - bw) / 2;
         char sbuf[80];
         fb_draw_text_centered(v, WIN_WIDTH / 2, 18, "NETWORK / VOICE", 0xffffffu);
         snprintf(sbuf, sizeof(sbuf), "Voice: %s", voice_state_name(g->voiceState));
         fb_draw_text_centered(v, WIN_WIDTH / 2, 52, sbuf, voice_state_color(g->voiceState));
-        render_button(v, bx, 92, bw, bh, "VOICE STATUS", "started before racing",
+        render_button(v, bx, 82, bw, bh, "START BRIDGE", "run configured script",
                       0x55d37au);
-        render_button(v, bx, 164, bw, bh, "WIFI", "SSID iphone17 / 12345678",
+        render_button(v, bx, 138, bw, bh,
+                      g->voiceSpeechEnabled ? "AI VOICE: ON" : "AI VOICE: OFF",
+                      g->voiceSpeechEnabled ? "tap to mute replies" : "tap to play replies",
                       0x47a8ffu);
+        render_button(v, bx, 194, bw, bh, "WIFI", "SSID iphone17 / 12345678",
+                      0x2a3a5au);
+        render_button(v, bx, 242, bw, 36, "BACK", "return to menu",
+                      0xffcc47u);
         if (g->voiceText[0] != '\0') {
-            fb_draw_text_centered(v, WIN_WIDTH / 2, 238, g->voiceText, 0xe6ecffu);
+            fb_draw_text_centered(v, WIN_WIDTH / 2, 292, g->voiceText, 0xe6ecffu);
         }
-        fb_draw_text_centered(v, WIN_WIDTH / 2, WIN_HEIGHT - 38,
-                              "run sh /data/racing_xiaozhi.sh once", 0xbfd1ffu);
-        fb_draw_text_centered(v, WIN_WIDTH / 2, WIN_HEIGHT - 16,
-                              "voice: say 'network', then 'start'", 0xbfd1ffu);
         fb_present(v);
         return;
     }
 
-    /* 主菜单(START):标题 + 当前操作模式 + 关卡/操作/网络三个按钮。 */
+    /* 主菜单(START):标题 + 当前操作模式 + Start/Track/Control/Voice 四个按钮。 */
     {
         int bw = 320;
-        int bh = 52;
+        int bh = 48;
         int bx = (WIN_WIDTH - bw) / 2;
-        char mbuf[48];
         char vbuf[80];
-        fb_draw_text_centered(v, WIN_WIDTH / 2, 18, "NAILONG  RACING", 0xffd23cu);
-        snprintf(mbuf, sizeof(mbuf), "Control: %s",
-                 g->menuControlMode == 1 ? "Gyro" : "Original");
-        fb_draw_text_centered(v, WIN_WIDTH / 2, 44, mbuf, 0x7fffc0u);
-        render_button(v, bx, 68, bw, bh, "TRACK", "Select track", 0x55d37au);
-        render_button(v, bx, 68 + bh + 12, bw, bh, "CONTROL", "Select control", 0x47a8ffu);
-        render_button(v, bx, 68 + (bh + 12) * 2, bw, bh, "NETWORK", "XiaoZhi voice bridge",
+        const char *start_hint = g->menuControlMode == 1 ? "start with Gyro"
+                                                         : "start with Original";
+        render_menu_title(v);
+        render_button(v, bx, 56, bw, bh, "START", start_hint, 0x55d37au);
+        render_button(v, bx, 108, bw, bh, "TRACK", "select track", 0x47a8ffu);
+        render_button(v, bx, 160, bw, bh, "CONTROL", "select control", 0x35cbd6u);
+        render_button(v, bx, 212, bw, bh, "VOICE", "network and AI voice",
                       0xffcc47u);
         snprintf(vbuf, sizeof(vbuf), "Voice: %s", voice_state_name(g->voiceState));
-        fb_draw_text_centered(v, WIN_WIDTH / 2, 262, vbuf, voice_state_color(g->voiceState));
+        fb_draw_text_centered(v, WIN_WIDTH / 2, 274, vbuf, voice_state_color(g->voiceState));
         if (g->voiceText[0] != '\0') {
-            fb_draw_text_centered(v, WIN_WIDTH / 2, 284, g->voiceText, 0xe6ecffu);
+            fb_draw_text_centered(v, WIN_WIDTH / 2, 296, g->voiceText, 0xe6ecffu);
         }
-        fb_draw_text_centered(v, WIN_WIDTH / 2, WIN_HEIGHT - 14,
-                              "Btn2: quit | tap Track / Control / Network", 0xbfd1ffu);
         fb_present(v);
     }
 }
@@ -1846,7 +1915,7 @@ void racing_fb_render_gyro_test(RacingFbView *v, const Jy60Sample *sample)
 
     render_menu_background(v);
     fb_draw_text_centered(v, WIN_WIDTH / 2, 24, "JY60 Test", 0xffffffu);
-    fb_draw_text_centered(v, WIN_WIDTH / 2, 48, "Btn1 / center returns to menu", 0xbfd1ffu);
+    fb_draw_text_centered(v, WIN_WIDTH / 2, 48, "Btn1 returns to menu", 0xbfd1ffu);
     fb_fill_rect_alpha(v, 14, 64, WIN_WIDTH - 15, WIN_HEIGHT - 46, 0x0d1730u, 220);
     render_gyro_rows(v, sample);
     fb_present(v);

@@ -27,7 +27,7 @@
 #endif
 
 #ifndef VIEW_DISTANCE
-#define VIEW_DISTANCE 60
+#define VIEW_DISTANCE 120
 #endif
 
 #ifndef COLLECTIBLE_COUNT

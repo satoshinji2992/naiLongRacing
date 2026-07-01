@@ -106,8 +106,10 @@ Racing 不引入 LVGL,只复用 lvgldemo 的小智链路: `arecord`/`aplay`
 启用 `CONFIG_EXAMPLES_RACING_VOICE=y` 后,Racing 监听 `127.0.0.1:5679`,
 只解析 `{"type":"stt","text":"..."}` 并映射成游戏命令。主菜单会显示
 `Voice: Listening / Speaking / Connecting / Activating / Fatal error` 等状态,
-也会显示最近一条识别文本。`control_center` 默认以 Racing 命令模式编译:
-只转发 STT 识别文本,不播放小智 AI 的 TTS 语音回复。
+也会显示最近一条识别文本。`control_center` 默认以 Racing 命令模式编译,
+把小智描述成奶龙赛车的车载语音助手;主菜单 `VOICE` 页可以切换
+`AI VOICE: ON/OFF`。关闭时只转发 STT 识别文本,不播放小智 AI 的 TTS
+语音回复;打开时会播放简短语音回复。
 
 本仓库提供示例脚本 `scripts/racing_xiaozhi.sh`,固定连接热点:
 ```text
@@ -123,7 +125,7 @@ sh /data/racing_xiaozhi.sh
 脚本会先连接 WiFi,再启动 `arecord` / `aplay` / `control_center`,最后启动
 `racing`。不要在 Racing 运行中再次启动这个脚本,否则第二个 `control_center`
 会抢 5676/5678 UDP 端口并出现 `Failed to bind socket`。Racing 主菜单里的
-**NETWORK** 只显示小智状态和最近识别文本。常用命令词:
+**VOICE** 页显示小智状态、WiFi 信息和 AI 语音播放开关。常用命令词:
 - “我是奶龙”:开启无限能量作弊。
 - “加速”:触发约 2.5 秒 boost。
 

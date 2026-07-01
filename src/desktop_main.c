@@ -34,6 +34,8 @@ static RacingInput read_desktop_input(bool *running)
                 input.mapSelect = true;     /* 主菜单 → 关卡选择 */
             } else if (event.key.keysym.scancode == SDL_SCANCODE_2) {
                 input.controlSelect = true; /* 主菜单 → 操作选择 */
+            } else if (event.key.keysym.scancode == SDL_SCANCODE_3) {
+                input.networkSelect = true; /* 主菜单 → 网络/语音 */
             } else if (event.key.keysym.scancode == SDL_SCANCODE_LEFT) {
                 input.cyclePrev = true;     /* 二级菜单:上一项 */
             } else if (event.key.keysym.scancode == SDL_SCANCODE_RIGHT) {

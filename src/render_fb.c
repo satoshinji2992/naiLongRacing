@@ -50,6 +50,13 @@ typedef struct {
     float y;
 } FbPoint;
 
+typedef struct {
+    float x;
+    float y;
+    float u;
+    float v;
+} FbTexPoint;
+
 /* 投影上下文，与 game.c 里那套摄像机投影一一对应。 */
 typedef struct ProjectionContext {
     int camX;
@@ -79,6 +86,9 @@ struct RacingFbView {
     RacingImg *img_cloud;
     RacingImg *img_nailong_bupt;   /* 地图“一路邮你”：北邮校徽收集物 */
     RacingImg *img_bg_bupt;        /* 地图“一路邮你”：北邮校门背景 */
+    RacingImg *img_tree;           /* 路边树 */
+    RacingImg *img_house_a;        /* 房子 A 面：垂直于路 */
+    RacingImg *img_house_b;        /* 房子 B 面：平行于路 */
 };
 
 /****************************************************************************
@@ -409,6 +419,102 @@ static void fb_blend_rgba(RacingFbView *v, int x, int y,
           (((g * a + (((dst >> 8) & 0xff) * ia)) / 255) << 8) |
           ((b * a + ((dst & 0xff) * ia)) / 255);
     fb_put_native(v, x, y, rgb);
+}
+
+static void fb_blit_textured_triangle(RacingFbView *v, const RacingImg *img,
+                                      FbTexPoint a, FbTexPoint b, FbTexPoint c,
+                                      uint8_t shade)
+{
+    float minX;
+    float maxX;
+    float minY;
+    float maxY;
+    float denom;
+    int x0;
+    int x1;
+    int y0;
+    int y1;
+
+    if (img == NULL || img->px == NULL)
+    {
+        return;
+    }
+
+    denom = (b.y - c.y) * (a.x - c.x) + (c.x - b.x) * (a.y - c.y);
+    if (fabsf(denom) < 0.0001f)
+    {
+        return;
+    }
+
+    minX = fminf(a.x, fminf(b.x, c.x));
+    maxX = fmaxf(a.x, fmaxf(b.x, c.x));
+    minY = fminf(a.y, fminf(b.y, c.y));
+    maxY = fmaxf(a.y, fmaxf(b.y, c.y));
+    x0 = (int)floorf(minX);
+    x1 = (int)ceilf(maxX);
+    y0 = (int)floorf(minY);
+    y1 = (int)ceilf(maxY);
+    if (x0 < 0) { x0 = 0; }
+    if (y0 < 0) { y0 = 0; }
+    if (x1 >= v->draw_w) { x1 = v->draw_w - 1; }
+    if (y1 >= v->draw_h) { y1 = v->draw_h - 1; }
+    if (x0 > x1 || y0 > y1)
+    {
+        return;
+    }
+
+    for (int y = y0; y <= y1; y++)
+    {
+        for (int x = x0; x <= x1; x++)
+        {
+            float px = (float)x + 0.5f;
+            float py = (float)y + 0.5f;
+            float wa = ((b.y - c.y) * (px - c.x) + (c.x - b.x) * (py - c.y)) / denom;
+            float wb = ((c.y - a.y) * (px - c.x) + (a.x - c.x) * (py - c.y)) / denom;
+            float wc = 1.0f - wa - wb;
+            float u;
+            float vv;
+            int sx;
+            int sy;
+            const uint8_t *sp;
+            uint8_t r;
+            uint8_t g;
+            uint8_t bch;
+
+            if (wa < -0.001f || wb < -0.001f || wc < -0.001f)
+            {
+                continue;
+            }
+
+            u = wa * a.u + wb * b.u + wc * c.u;
+            vv = wa * a.v + wb * b.v + wc * c.v;
+            if (u < 0.0f) { u = 0.0f; }
+            if (u > 1.0f) { u = 1.0f; }
+            if (vv < 0.0f) { vv = 0.0f; }
+            if (vv > 1.0f) { vv = 1.0f; }
+
+            sx = (int)(u * (float)(img->w - 1));
+            sy = (int)(vv * (float)(img->h - 1));
+            sp = img->px + ((size_t)sy * img->w + sx) * 4;
+            r = (uint8_t)((unsigned int)sp[0] * shade / 255u);
+            g = (uint8_t)((unsigned int)sp[1] * shade / 255u);
+            bch = (uint8_t)((unsigned int)sp[2] * shade / 255u);
+            fb_blend_rgba(v, x, y, r, g, bch, sp[3]);
+        }
+    }
+}
+
+static void fb_blit_textured_quad(RacingFbView *v, const RacingImg *img,
+                                  FbPoint p0, FbPoint p1, FbPoint p2, FbPoint p3,
+                                  uint8_t shade)
+{
+    FbTexPoint t0 = {p0.x, p0.y, 0.0f, 0.0f};
+    FbTexPoint t1 = {p1.x, p1.y, 1.0f, 0.0f};
+    FbTexPoint t2 = {p2.x, p2.y, 1.0f, 1.0f};
+    FbTexPoint t3 = {p3.x, p3.y, 0.0f, 1.0f};
+
+    fb_blit_textured_triangle(v, img, t0, t1, t2, shade);
+    fb_blit_textured_triangle(v, img, t0, t2, t3, shade);
 }
 
 /* 把整张 img 缩放到目标矩形 (dx,dy,dw,dh)，最近邻 + alpha 混合，裁剪到屏幕。 */
@@ -778,6 +884,141 @@ static void render_collectibles(RacingFbView *v)
             }
         }
     }
+}
+
+static FbPoint fb_point_from_game_point(const Point *p)
+{
+    FbPoint out;
+    out.x = p->X;
+    out.y = p->Y;
+    return out;
+}
+
+static int point_in_front(const Point *p)
+{
+    return p != NULL && p->tz > (float)SEG_LENGTH * 0.45f;
+}
+
+static int face_in_front(const Point *a, const Point *b, const Point *c, const Point *d)
+{
+    return point_in_front(a) && point_in_front(b) &&
+           point_in_front(c) && point_in_front(d);
+}
+
+static void render_trees_fb(RacingFbView *v)
+{
+    const RacingGame *game = v->game;
+
+    if (game->mapIndex == 1 || v->img_tree == NULL)
+    {
+        return;
+    }
+
+    for (int d = VIEW_DISTANCE; d >= 1; d--)
+    {
+        for (int i = 0; i < TREE_COUNT; i++)
+        {
+            const Tree *t = &game->trees[i];
+            int x;
+            int y;
+            int w;
+            int h;
+
+            if (!t->visible || t->segDist != d || t->p[0].tz <= 0.1f)
+            {
+                continue;
+            }
+
+            w = (int)fabsf(t->p[1].X - t->p[0].X);
+            h = (int)fabsf(t->p[0].Y - t->p[2].Y);
+            x = (int)t->p[0].X;
+            y = (int)t->p[2].Y;
+            if (w <= 0 || h <= 0 ||
+                x >= WIN_WIDTH || y >= WIN_HEIGHT || x + w < 0 || y + h < 0)
+            {
+                continue;
+            }
+
+            fb_blit_scaled(v, v->img_tree, x, y, w, h);
+        }
+    }
+}
+
+static void render_houses_fb(RacingFbView *v)
+{
+    const RacingGame *game = v->game;
+
+    if (game->mapIndex == 1 || (v->img_house_a == NULL && v->img_house_b == NULL))
+    {
+        return;
+    }
+
+    for (int d = VIEW_DISTANCE; d >= 1; d--)
+    {
+        for (int i = 0; i < HOUSE_COUNT; i++)
+        {
+            const House *h = &game->houses[i];
+            const Point *c;
+            FbPoint p0;
+            FbPoint p1;
+            FbPoint p2;
+            FbPoint p3;
+
+            if (!h->visible || h->segDist != d)
+            {
+                continue;
+            }
+
+            c = h->corner;
+
+            /* 屋顶：y 为常量的顶面，先画纯色屋顶。 */
+            if (face_in_front(&c[2], &c[3], &c[7], &c[6]))
+            {
+                p0 = fb_point_from_game_point(&c[2]);
+                p1 = fb_point_from_game_point(&c[3]);
+                p2 = fb_point_from_game_point(&c[7]);
+                p3 = fb_point_from_game_point(&c[6]);
+                fb_fill_quad(v, p0, p1, p2, p3, 0x844e39u);
+            }
+
+            /* A 面：z 为常量，横跨 x 方向，和路的前进方向垂直。 */
+            if (v->img_house_a != NULL && face_in_front(&c[2], &c[3], &c[1], &c[0]))
+            {
+                p0 = fb_point_from_game_point(&c[2]);
+                p1 = fb_point_from_game_point(&c[3]);
+                p2 = fb_point_from_game_point(&c[1]);
+                p3 = fb_point_from_game_point(&c[0]);
+                fb_blit_textured_quad(v, v->img_house_a, p0, p1, p2, p3, 255);
+            }
+
+            /* B 面：x 为常量，沿 z 方向延伸，和路平行；选靠近道路的一侧。 */
+            if (v->img_house_b != NULL)
+            {
+                if (h->side >= 0 && face_in_front(&c[2], &c[6], &c[4], &c[0]))
+                {
+                    p0 = fb_point_from_game_point(&c[2]);
+                    p1 = fb_point_from_game_point(&c[6]);
+                    p2 = fb_point_from_game_point(&c[4]);
+                    p3 = fb_point_from_game_point(&c[0]);
+                    fb_blit_textured_quad(v, v->img_house_b, p0, p1, p2, p3, 215);
+                }
+                else if (h->side < 0 && face_in_front(&c[7], &c[3], &c[1], &c[5]))
+                {
+                    p0 = fb_point_from_game_point(&c[7]);
+                    p1 = fb_point_from_game_point(&c[3]);
+                    p2 = fb_point_from_game_point(&c[1]);
+                    p3 = fb_point_from_game_point(&c[5]);
+                    fb_blit_textured_quad(v, v->img_house_b, p0, p1, p2, p3, 215);
+                }
+            }
+        }
+    }
+}
+
+static void render_world_decor(RacingFbView *v)
+{
+    render_houses_fb(v);
+    render_trees_fb(v);
 }
 
 /****************************************************************************
@@ -1230,6 +1471,46 @@ static void render_button(RacingFbView *v, int x, int y, int w, int h,
     fb_draw_text_centered(v, x + w / 2, y + 32, hint, 0xbfd1ffu);
 }
 
+static const char *voice_state_name(int state)
+{
+    switch (state) {
+    case 1:
+        return "Starting";
+    case 2:
+        return "WiFi setup";
+    case 3:
+        return "Idle";
+    case 4:
+        return "Connecting";
+    case 5:
+        return "Listening";
+    case 6:
+        return "Speaking";
+    case 7:
+        return "Upgrading";
+    case 8:
+        return "Activating";
+    case 9:
+        return "Fatal error";
+    default:
+        return "Unknown";
+    }
+}
+
+static uint32_t voice_state_color(int state)
+{
+    if (state == 3 || state == 5 || state == 6) {
+        return 0x7fffc0u;
+    }
+    if (state == 1 || state == 4 || state == 8) {
+        return 0xffcc47u;
+    }
+    if (state == 9) {
+        return 0xff5d5du;
+    }
+    return 0xbfd1ffu;
+}
+
 /* 难度指示:三格方块,填充数 = 难度(简单 1 / 中等 2 / 困难 3),颜色随难度。 */
 static void draw_difficulty_fb(RacingFbView *v, int cx, int cy, int mapIndex)
 {
@@ -1361,6 +1642,9 @@ RacingFbView *racing_fb_create(RacingGame *game)
     v->img_cloud    = img_load("cloud.raw");
     v->img_nailong_bupt = img_load("nailong_bupt.raw");
     v->img_bg_bupt      = img_load("bg_bupt.raw");
+    v->img_tree         = img_load("tree.raw");
+    v->img_house_a      = img_load("house_a.raw");
+    v->img_house_b      = img_load("house_b.raw");
 
     return v;
 }
@@ -1378,6 +1662,9 @@ void racing_fb_delete(RacingFbView *v)
     img_free(v->img_cloud);
     img_free(v->img_nailong_bupt);
     img_free(v->img_bg_bupt);
+    img_free(v->img_tree);
+    img_free(v->img_house_a);
+    img_free(v->img_house_b);
 
     /* 退出前清屏到黑并推送一次,避免残留在最后一帧、释放显示。 */
     if (v->fbmem != NULL && v->fbmem != MAP_FAILED) {
@@ -1420,6 +1707,7 @@ void racing_fb_render(RacingFbView *v)
         render_sky_decor(v);        /* 云 + 远近山（视差） */
     }
     render_track(v);            /* 路面：草地 + 路肩 + 沥青 + 终点旗 */
+    render_world_decor(v);      /* 路外装饰：房子 + 树 */
     render_collectibles(v);     /* 奶龙（贴图或几何） */
     render_car(v);              /* 车内视角 cockpit */
     render_hud(v);              /* 文字 HUD + 能量条 + 模式面板 */
@@ -1498,20 +1786,52 @@ void racing_fb_render_menu(RacingFbView *v)
         return;
     }
 
-    /* 主菜单(START):标题 + 当前操作模式 + 关卡/操作两个按钮(上=关卡,下=操作)。 */
+    if (g->mode == RACING_MODE_NETWORK_SELECT)
     {
         int bw = 320;
-        int bh = 60;
+        int bh = 56;
+        int bx = (WIN_WIDTH - bw) / 2;
+        char sbuf[80];
+        fb_draw_text_centered(v, WIN_WIDTH / 2, 18, "NETWORK / VOICE", 0xffffffu);
+        snprintf(sbuf, sizeof(sbuf), "Voice: %s", voice_state_name(g->voiceState));
+        fb_draw_text_centered(v, WIN_WIDTH / 2, 52, sbuf, voice_state_color(g->voiceState));
+        render_button(v, bx, 92, bw, bh, "START BRIDGE", "connect iphone17",
+                      0x55d37au);
+        render_button(v, bx, 164, bw, bh, "WIFI", "SSID iphone17 / 12345678",
+                      0x47a8ffu);
+        if (g->voiceText[0] != '\0') {
+            fb_draw_text_centered(v, WIN_WIDTH / 2, 238, g->voiceText, 0xe6ecffu);
+        }
+        fb_draw_text_centered(v, WIN_WIDTH / 2, WIN_HEIGHT - 38,
+                              "center: run script | Btn2/top: back", 0xbfd1ffu);
+        fb_draw_text_centered(v, WIN_WIDTH / 2, WIN_HEIGHT - 16,
+                              "voice: say 'network', then 'start'", 0xbfd1ffu);
+        fb_present(v);
+        return;
+    }
+
+    /* 主菜单(START):标题 + 当前操作模式 + 关卡/操作/网络三个按钮。 */
+    {
+        int bw = 320;
+        int bh = 52;
         int bx = (WIN_WIDTH - bw) / 2;
         char mbuf[48];
+        char vbuf[80];
         fb_draw_text_centered(v, WIN_WIDTH / 2, 18, "NAILONG  RACING", 0xffd23cu);
         snprintf(mbuf, sizeof(mbuf), "Control: %s",
                  g->menuControlMode == 1 ? "Gyro" : "Original");
         fb_draw_text_centered(v, WIN_WIDTH / 2, 44, mbuf, 0x7fffc0u);
-        render_button(v, bx, 76, bw, bh, "TRACK", "Select track", 0x55d37au);
-        render_button(v, bx, 76 + bh + 16, bw, bh, "CONTROL", "Select control", 0x47a8ffu);
+        render_button(v, bx, 68, bw, bh, "TRACK", "Select track", 0x55d37au);
+        render_button(v, bx, 68 + bh + 12, bw, bh, "CONTROL", "Select control", 0x47a8ffu);
+        render_button(v, bx, 68 + (bh + 12) * 2, bw, bh, "NETWORK", "XiaoZhi voice bridge",
+                      0xffcc47u);
+        snprintf(vbuf, sizeof(vbuf), "Voice: %s", voice_state_name(g->voiceState));
+        fb_draw_text_centered(v, WIN_WIDTH / 2, 262, vbuf, voice_state_color(g->voiceState));
+        if (g->voiceText[0] != '\0') {
+            fb_draw_text_centered(v, WIN_WIDTH / 2, 284, g->voiceText, 0xe6ecffu);
+        }
         fb_draw_text_centered(v, WIN_WIDTH / 2, WIN_HEIGHT - 14,
-                              "Btn2: quit | tap top=Track / bot=Control", 0xbfd1ffu);
+                              "Btn2: quit | tap Track / Control / Network", 0xbfd1ffu);
         fb_present(v);
     }
 }

@@ -23,6 +23,7 @@ typedef struct ProjectedPoint
 {
     float x;
     float y;
+    float tz;
 } ProjectedPoint;
 
 struct RacingSdlRenderer
@@ -36,19 +37,275 @@ struct RacingSdlRenderer
     SDL_Texture *nailongHead;
     SDL_Texture *nailongBupt;   /* 地图“一路邮你”的收集物：北邮校徽 */
     SDL_Texture *bgBupt;        /* 地图“一路邮你”的背景：北邮校门 */
+    SDL_Texture *tree;          /* 路边树(map 0/2) */
+    SDL_Texture *houseA;        /* 路边房子 A 正面(map 0/2);侧面/顶面用顶点色调制派生 */
+    SDL_Texture *houseB;        /* 路边房子 B 正面(map 0/2) */
     TTF_Font *font;
     TTF_Font *titleFont;   /* 大号字体，菜单标题用 */
     bool imageReady;
     bool ttfReady;
 };
 
-static SDL_Texture *load_texture(SDL_Renderer *renderer, const char *path)
+static bool is_cutout_background(Uint8 r, Uint8 g, Uint8 b)
 {
-    SDL_Texture *texture = IMG_LoadTexture(renderer, path);
+    Uint8 maxc = r > g ? (r > b ? r : b) : (g > b ? g : b);
+    Uint8 minc = r < g ? (r < b ? r : b) : (g < b ? g : b);
+    return maxc >= 190 && (Uint8)(maxc - minc) <= 30;
+}
+
+static void cutout_surface_background(SDL_Surface *surface)
+{
+    Uint32 *pixels;
+    unsigned char *seen;
+    int *queue;
+    int pitch;
+    int head = 0;
+    int tail = 0;
+    int count;
+
+    if (surface == NULL || SDL_LockSurface(surface) != 0)
+    {
+        return;
+    }
+
+    count = surface->w * surface->h;
+    seen = (unsigned char *)calloc((size_t)count, sizeof(*seen));
+    queue = (int *)malloc((size_t)count * sizeof(*queue));
+    if (seen == NULL || queue == NULL)
+    {
+        free(seen);
+        free(queue);
+        SDL_UnlockSurface(surface);
+        return;
+    }
+
+    pixels = (Uint32 *)surface->pixels;
+    pitch = surface->pitch / (int)sizeof(Uint32);
+
+    for (int y = 0; y < surface->h; y++)
+    {
+        for (int edge = 0; edge < 2; edge++)
+        {
+            int x = edge == 0 ? 0 : surface->w - 1;
+            int idx = y * surface->w + x;
+            Uint8 r;
+            Uint8 g;
+            Uint8 b;
+            Uint8 a;
+
+            SDL_GetRGBA(pixels[y * pitch + x], surface->format, &r, &g, &b, &a);
+            if (!seen[idx] && a > 0 && is_cutout_background(r, g, b))
+            {
+                seen[idx] = 1;
+                queue[tail++] = idx;
+            }
+        }
+    }
+
+    for (int x = 0; x < surface->w; x++)
+    {
+        for (int edge = 0; edge < 2; edge++)
+        {
+            int y = edge == 0 ? 0 : surface->h - 1;
+            int idx = y * surface->w + x;
+            Uint8 r;
+            Uint8 g;
+            Uint8 b;
+            Uint8 a;
+
+            SDL_GetRGBA(pixels[y * pitch + x], surface->format, &r, &g, &b, &a);
+            if (!seen[idx] && a > 0 && is_cutout_background(r, g, b))
+            {
+                seen[idx] = 1;
+                queue[tail++] = idx;
+            }
+        }
+    }
+
+    while (head < tail)
+    {
+        int idx = queue[head++];
+        int x = idx % surface->w;
+        int y = idx / surface->w;
+        static const int dx[4] = { -1, 1, 0, 0 };
+        static const int dy[4] = { 0, 0, -1, 1 };
+
+        pixels[y * pitch + x] = SDL_MapRGBA(surface->format, 255, 255, 255, 0);
+
+        for (int i = 0; i < 4; i++)
+        {
+            int nx = x + dx[i];
+            int ny = y + dy[i];
+            int nidx;
+            Uint8 r;
+            Uint8 g;
+            Uint8 b;
+            Uint8 a;
+
+            if (nx < 0 || nx >= surface->w || ny < 0 || ny >= surface->h)
+            {
+                continue;
+            }
+            nidx = ny * surface->w + nx;
+            if (seen[nidx])
+            {
+                continue;
+            }
+            SDL_GetRGBA(pixels[ny * pitch + nx], surface->format, &r, &g, &b, &a);
+            if (a > 0 && is_cutout_background(r, g, b))
+            {
+                seen[nidx] = 1;
+                queue[tail++] = nidx;
+            }
+        }
+    }
+
+    free(seen);
+    free(queue);
+    SDL_UnlockSurface(surface);
+}
+
+static SDL_Surface *trim_surface_alpha_bounds(SDL_Surface *surface)
+{
+    Uint32 *pixels;
+    int pitch;
+    int minX;
+    int minY;
+    int maxX;
+    int maxY;
+    SDL_Rect src;
+    SDL_Surface *trimmed;
+
+    if (surface == NULL || SDL_LockSurface(surface) != 0)
+    {
+        return surface;
+    }
+
+    pixels = (Uint32 *)surface->pixels;
+    pitch = surface->pitch / (int)sizeof(Uint32);
+    minX = surface->w;
+    minY = surface->h;
+    maxX = -1;
+    maxY = -1;
+
+    for (int y = 0; y < surface->h; y++)
+    {
+        for (int x = 0; x < surface->w; x++)
+        {
+            Uint8 r;
+            Uint8 g;
+            Uint8 b;
+            Uint8 a;
+
+            SDL_GetRGBA(pixels[y * pitch + x], surface->format, &r, &g, &b, &a);
+            if (a > 12)
+            {
+                if (x < minX) { minX = x; }
+                if (x > maxX) { maxX = x; }
+                if (y < minY) { minY = y; }
+                if (y > maxY) { maxY = y; }
+            }
+        }
+    }
+    SDL_UnlockSurface(surface);
+
+    if (maxX < minX || maxY < minY)
+    {
+        return surface;
+    }
+
+    src.x = minX;
+    src.y = minY;
+    src.w = maxX - minX + 1;
+    src.h = maxY - minY + 1;
+    if (src.x == 0 && src.y == 0 && src.w == surface->w && src.h == surface->h)
+    {
+        return surface;
+    }
+
+    trimmed = SDL_CreateRGBSurfaceWithFormat(0, src.w, src.h, 32, SDL_PIXELFORMAT_RGBA32);
+    if (trimmed == NULL)
+    {
+        return surface;
+    }
+
+    SDL_SetSurfaceBlendMode(surface, SDL_BLENDMODE_NONE);
+    if (SDL_BlitSurface(surface, &src, trimmed, NULL) != 0)
+    {
+        SDL_FreeSurface(trimmed);
+        return surface;
+    }
+
+    SDL_FreeSurface(surface);
+    return trimmed;
+}
+
+static SDL_Texture *texture_from_surface(SDL_Renderer *renderer, SDL_Surface *surface,
+                                         const char *path, bool cutoutBackground)
+{
+    SDL_Surface *work = surface;
+    SDL_Texture *texture;
+
+    if (cutoutBackground)
+    {
+        work = SDL_ConvertSurfaceFormat(surface, SDL_PIXELFORMAT_RGBA32, 0);
+        if (work != NULL)
+        {
+            cutout_surface_background(work);
+            work = trim_surface_alpha_bounds(work);
+        }
+        else
+        {
+            work = surface;
+        }
+    }
+
+    texture = SDL_CreateTextureFromSurface(renderer, work);
     if (texture == NULL)
     {
-        fprintf(stderr, "Could not load %s: %s\n", path, IMG_GetError());
+        fprintf(stderr, "Could not create texture %s: %s\n", path, SDL_GetError());
     }
+    else
+    {
+        SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
+    }
+
+    if (work != surface)
+    {
+        SDL_FreeSurface(work);
+    }
+    return texture;
+}
+
+static SDL_Texture *load_texture(SDL_Renderer *renderer, const char *path)
+{
+    SDL_Surface *surface = IMG_Load(path);
+    SDL_Texture *texture;
+
+    if (surface == NULL)
+    {
+        fprintf(stderr, "Could not load %s: %s\n", path, IMG_GetError());
+        return NULL;
+    }
+
+    texture = texture_from_surface(renderer, surface, path, false);
+    SDL_FreeSurface(surface);
+    return texture;
+}
+
+static SDL_Texture *load_cutout_texture(SDL_Renderer *renderer, const char *path)
+{
+    SDL_Surface *surface = IMG_Load(path);
+    SDL_Texture *texture;
+
+    if (surface == NULL)
+    {
+        fprintf(stderr, "Could not load %s: %s\n", path, IMG_GetError());
+        return NULL;
+    }
+
+    texture = texture_from_surface(renderer, surface, path, true);
+    SDL_FreeSurface(surface);
     return texture;
 }
 
@@ -306,6 +563,32 @@ static void draw_track_thumbnail(SDL_Renderer *r, const RacingGame *game, int x0
     }
 }
 
+static const char *voice_state_name_sdl(int state)
+{
+    switch (state) {
+    case 1:
+        return "Starting";
+    case 2:
+        return "WiFi setup";
+    case 3:
+        return "Idle";
+    case 4:
+        return "Connecting";
+    case 5:
+        return "Listening";
+    case 6:
+        return "Speaking";
+    case 7:
+        return "Upgrading";
+    case 8:
+        return "Activating";
+    case 9:
+        return "Fatal error";
+    default:
+        return "Unknown";
+    }
+}
+
 /* 统一绘制菜单(主菜单/关卡选择/操作选择)/暂停/结束界面。 */
 static void draw_mode_overlay(RacingSdlRenderer *view, const RacingGame *game)
 {
@@ -323,7 +606,7 @@ static void draw_mode_overlay(RacingSdlRenderer *view, const RacingGame *game)
 
     if (game->mode == RACING_MODE_START)
     {
-        /* 主菜单:标题「奶龙赛车」+ 副标题 + 关卡/操作两个按钮。 */
+        /* 主菜单:标题「奶龙赛车」+ 副标题 + 关卡/操作/网络三个按钮。 */
         draw_center_panel(r, 372, 252, (SDL_Color){13, 23, 48, 230}, (SDL_Color){127, 151, 199, 220});
         if (view->nailong != NULL)
         {
@@ -335,9 +618,12 @@ static void draw_mode_overlay(RacingSdlRenderer *view, const RacingGame *game)
         snprintf(buf, sizeof(buf), "操控 Control: %s",
                  game->menuControlMode == 1 ? "Gyro (JY60)" : "Original (Touch)");
         draw_text_centered(r, font, buf, 110, (SDL_Color){120, 230, 140, 255});
-        draw_button(r, WIN_WIDTH / 2 - 132, 138, 264, 46, "1   关卡选择  Track", font, body, false);
-        draw_button(r, WIN_WIDTH / 2 - 132, 198, 264, 46, "2   操作选择  Control", font, body, false);
-        draw_text_centered(r, font, "1 Track       2 Control", WIN_HEIGHT - 34, hint);
+        draw_button(r, WIN_WIDTH / 2 - 132, 126, 264, 40, "1   关卡选择  Track", font, body, false);
+        draw_button(r, WIN_WIDTH / 2 - 132, 174, 264, 40, "2   操作选择  Control", font, body, false);
+        draw_button(r, WIN_WIDTH / 2 - 132, 222, 264, 40, "3   网络语音  Network", font, body, false);
+        snprintf(buf, sizeof(buf), "Voice: %s", voice_state_name_sdl(game->voiceState));
+        draw_text_centered(r, font, buf, WIN_HEIGHT - 54, hint);
+        draw_text_centered(r, font, "1 Track   2 Control   3 Network", WIN_HEIGHT - 30, hint);
         return;
     }
 
@@ -382,6 +668,18 @@ static void draw_mode_overlay(RacingSdlRenderer *view, const RacingGame *game)
         return;
     }
 
+    if (game->mode == RACING_MODE_NETWORK_SELECT)
+    {
+        draw_center_panel(r, 372, 224, (SDL_Color){13, 23, 48, 230}, (SDL_Color){127, 151, 199, 220});
+        draw_text_centered(r, font, "网络语音 — Network / Voice", 28, body);
+        snprintf(buf, sizeof(buf), "Voice: %s", voice_state_name_sdl(game->voiceState));
+        draw_text_centered(r, font, buf, 70, (SDL_Color){120, 230, 140, 255});
+        draw_button(r, WIN_WIDTH / 2 - 142, 108, 284, 46, "Enter  Start Bridge", font, body, true);
+        draw_text_centered(r, font, "SSID iphone17 / 12345678", 176, hint);
+        draw_text_centered(r, font, "Esc Back", WIN_HEIGHT - 24, hint);
+        return;
+    }
+
     if (game->mode == RACING_MODE_PAUSED)
     {
         draw_center_panel(r, 300, 168, (SDL_Color){13, 23, 48, 225}, (SDL_Color){127, 151, 199, 220});
@@ -422,7 +720,30 @@ static ProjectedPoint project_world_point(float x, float y, float z, int camX, i
     scale = 1.0f / tz;
     projected.x = (1.0f + scale * tx) * WIN_WIDTH / 2.0f;
     projected.y = (1.0f - scale * (y - camY)) * WIN_HEIGHT / 2.0f;
+    projected.tz = tz;
     return projected;
+}
+
+static bool project_world_point_visible(float x, float y, float z,
+                                        int camX, int camY, int camZ, float angle,
+                                        ProjectedPoint *projected)
+{
+    float sinAngle = sinf(angle);
+    float cosAngle = cosf(angle);
+    float tx = (x - camX) * cosAngle + (z - camZ) * sinAngle;
+    float tz = -(x - camX) * sinAngle + (z - camZ) * cosAngle;
+    float scale;
+
+    if (projected == NULL || tz < (float)SEG_LENGTH * 0.45f)
+    {
+        return false;
+    }
+
+    scale = 1.0f / tz;
+    projected->x = (1.0f + scale * tx) * WIN_WIDTH / 2.0f;
+    projected->y = (1.0f - scale * (y - camY)) * WIN_HEIGHT / 2.0f;
+    projected->tz = tz;
+    return true;
 }
 
 /* 把一个世界矩形拆成四个投影点，再送进 SDL 的几何接口。 */
@@ -656,8 +977,7 @@ static bool is_collectible_visible(const RacingGame *game, int collectibleIndex)
 static void render_track(SDL_Renderer *renderer, const RacingGame *game)
 {
     int start = racing_game_start_segment(game);
-    float bankAngle = game->turnLeft ? -0.1f : game->turnRight ? 0.1f
-                                                               : 0.0f;
+    float bankAngle = 0.0f;   /* 去掉转弯倾斜:路边树/房子不再跟着斜 */
 
     for (int offset = VIEW_DISTANCE; offset > 0; offset--)
     {
@@ -769,7 +1089,7 @@ RacingSdlRenderer *racing_sdl_renderer_create(SDL_Renderer *renderer)
     }
 
     view->renderer = renderer;
-    view->imageReady = (IMG_Init(IMG_INIT_PNG) & IMG_INIT_PNG) != 0;
+    view->imageReady = (IMG_Init(IMG_INIT_PNG | IMG_INIT_JPG) & IMG_INIT_PNG) != 0;
     if (!view->imageReady)
     {
         fprintf(stderr, "IMG_Init PNG failed: %s\n", IMG_GetError());
@@ -789,6 +1109,9 @@ RacingSdlRenderer *racing_sdl_renderer_create(SDL_Renderer *renderer)
     view->nailongHead = load_texture(renderer, ASSET_DIR "/images/nailong_head.png");
     view->nailongBupt = load_texture(renderer, ASSET_DIR "/images/nailong_bupt.png");
     view->bgBupt = load_texture(renderer, ASSET_DIR "/images/bg_bupt.jpg");
+    view->tree = load_cutout_texture(renderer, ASSET_DIR "/images/tree.png");
+    view->houseA = load_cutout_texture(renderer, ASSET_DIR "/images/house_a.png");
+    view->houseB = load_cutout_texture(renderer, ASSET_DIR "/images/house_b.png");
     if (view->ttfReady)
     {
         /* CJK 字体（含中文，如地图名“一路邮你”）。逐个尝试并记录到底用了哪个。 */
@@ -836,6 +1159,9 @@ void racing_sdl_renderer_delete(RacingSdlRenderer *view)
     destroy_texture(&view->nailongHead);
     destroy_texture(&view->nailongBupt);
     destroy_texture(&view->bgBupt);
+    destroy_texture(&view->tree);
+    destroy_texture(&view->houseA);
+    destroy_texture(&view->houseB);
     if (view->font != NULL)
     {
         TTF_CloseFont(view->font);
@@ -981,6 +1307,252 @@ static void draw_minimap(SDL_Renderer *renderer, const RacingGame *game)
     }
 }
 
+/* 纯色四边形用于房子的侧面/顶面，稳定、便宜，不受贴图透视变形影响。 */
+static void draw_colored_quad(SDL_Renderer *r,
+                              float x0, float y0, float x1, float y1,
+                              float x2, float y2, float x3, float y3,
+                              SDL_Color color)
+{
+    SDL_Vertex v[4];
+    int idx[6] = {0, 1, 2, 0, 2, 3};
+
+    v[0].position.x = x0; v[0].position.y = y0;
+    v[1].position.x = x1; v[1].position.y = y1;
+    v[2].position.x = x2; v[2].position.y = y2;
+    v[3].position.x = x3; v[3].position.y = y3;
+    for (int i = 0; i < 4; i++)
+    {
+        v[i].color = color;
+        v[i].tex_coord.x = 0.0f;
+        v[i].tex_coord.y = 0.0f;
+    }
+    SDL_RenderGeometry(r, NULL, v, 4, idx, 6);
+}
+
+static void draw_textured_quad(SDL_Renderer *r, SDL_Texture *tex,
+                               float x0, float y0, float x1, float y1,
+                               float x2, float y2, float x3, float y3,
+                               SDL_Color shade)
+{
+    SDL_Vertex v[4];
+    int idx[6] = {0, 1, 2, 0, 2, 3};
+
+    if (tex == NULL)
+    {
+        draw_colored_quad(r, x0, y0, x1, y1, x2, y2, x3, y3, shade);
+        return;
+    }
+
+    v[0].position.x = x0; v[0].position.y = y0; v[0].tex_coord.x = 0.0f; v[0].tex_coord.y = 0.0f;
+    v[1].position.x = x1; v[1].position.y = y1; v[1].tex_coord.x = 1.0f; v[1].tex_coord.y = 0.0f;
+    v[2].position.x = x2; v[2].position.y = y2; v[2].tex_coord.x = 1.0f; v[2].tex_coord.y = 1.0f;
+    v[3].position.x = x3; v[3].position.y = y3; v[3].tex_coord.x = 0.0f; v[3].tex_coord.y = 1.0f;
+    for (int i = 0; i < 4; i++)
+    {
+        v[i].color = shade;
+    }
+    SDL_RenderGeometry(r, tex, v, 4, idx, 6);
+}
+
+static bool projected_quad_on_screen(const ProjectedPoint p[4])
+{
+    float minX = p[0].x;
+    float maxX = p[0].x;
+    float minY = p[0].y;
+    float maxY = p[0].y;
+
+    for (int i = 1; i < 4; i++)
+    {
+        if (p[i].x < minX) { minX = p[i].x; }
+        if (p[i].x > maxX) { maxX = p[i].x; }
+        if (p[i].y < minY) { minY = p[i].y; }
+        if (p[i].y > maxY) { maxY = p[i].y; }
+    }
+
+    return maxX >= -WIN_WIDTH && minX <= WIN_WIDTH * 2.0f &&
+           maxY >= -WIN_HEIGHT && minY <= WIN_HEIGHT * 2.0f;
+}
+
+static void draw_projected_textured_quad(SDL_Renderer *r, SDL_Texture *tex,
+                                         const ProjectedPoint p[4], SDL_Color shade)
+{
+    if (!projected_quad_on_screen(p))
+    {
+        return;
+    }
+
+    draw_textured_quad(r, tex,
+                       p[0].x, p[0].y,
+                       p[1].x, p[1].y,
+                       p[2].x, p[2].y,
+                       p[3].x, p[3].y,
+                       shade);
+}
+
+static void draw_projected_colored_quad(SDL_Renderer *r, const ProjectedPoint p[4],
+                                        SDL_Color color)
+{
+    if (!projected_quad_on_screen(p))
+    {
+        return;
+    }
+
+    draw_colored_quad(r,
+                      p[0].x, p[0].y,
+                      p[1].x, p[1].y,
+                      p[2].x, p[2].y,
+                      p[3].x, p[3].y,
+                      color);
+}
+
+/* 路边树(map 0/2):贴地 billboard,按 segDist 远→近画。 */
+static void render_trees(SDL_Renderer *r, const RacingGame *game, SDL_Texture *tree)
+{
+    int d;
+
+    if (game->mapIndex == 1 || tree == NULL)
+    {
+        return;
+    }
+    for (d = VIEW_DISTANCE; d >= 1; d--)
+    {
+        int i;
+        for (i = 0; i < TREE_COUNT; i++)
+        {
+            const Tree *t = &game->trees[i];
+            SDL_Rect dst;
+            int w;
+            int h;
+
+            if (!t->visible || t->segDist != d || t->p[0].tz <= 0.1f)
+            {
+                continue;
+            }
+            w = (int)fabsf(t->p[1].X - t->p[0].X);
+            h = (int)fabsf(t->p[0].Y - t->p[2].Y);
+            dst.x = (int)t->p[0].X;
+            dst.y = (int)t->p[2].Y;
+            dst.w = w;
+            dst.h = h;
+            if (dst.w <= 0 || dst.h <= 0 ||
+                dst.x >= WIN_WIDTH || dst.y >= WIN_HEIGHT ||
+                dst.x + dst.w < 0 || dst.y + dst.h < 0)
+            {
+                continue;
+            }
+            SDL_RenderCopy(r, tree, NULL, &dst);
+        }
+    }
+}
+
+/* 路边房子(map 0/2):A 面垂直于路(正面),B 面平行于路(侧面)。按赛段深度
+ * 远→近排序，避免近处角点 near-plane 夹取导致的翻面/炸屏。 */
+static void render_houses_3d(SDL_Renderer *r, const RacingGame *game,
+                             SDL_Texture *houseA, SDL_Texture *houseB)
+{
+    int d;
+
+    if (game->mapIndex == 1 || (houseA == NULL && houseB == NULL))
+    {
+        return;
+    }
+    for (d = VIEW_DISTANCE; d >= 1; d--)
+    {
+        int i;
+        for (i = 0; i < HOUSE_COUNT; i++)
+        {
+            const House *h = &game->houses[i];
+            const Road *road;
+            ProjectedPoint roof[4];
+            ProjectedPoint faceA[4];
+            ProjectedPoint faceB[4];
+            float x0;
+            float x1;
+            float y0;
+            float y1;
+            float z0;
+            float z1;
+            float innerX;
+            int segment;
+            int camZ;
+
+            if (!h->visible || h->segDist != d)
+            {
+                continue;
+            }
+
+            segment = h->segment;
+            road = &game->roads[segment];
+            camZ = game->camZ - ((racing_game_start_segment(game) + h->segDist >= ROAD_COUNT) ? TRACK_LENGTH : 0);
+
+            x0 = h->centerWorldX - HOUSE_WORLD_W / 2.0f;
+            x1 = h->centerWorldX + HOUSE_WORLD_W / 2.0f;
+            y0 = road->y;
+            y1 = road->y + HOUSE_WORLD_H;
+            z0 = road->z - HOUSE_WORLD_D / 2.0f;
+            z1 = road->z + HOUSE_WORLD_D / 2.0f;
+            innerX = h->side >= 0 ? x0 : x1;
+
+            if (project_world_point_visible(x0, y1, z0, game->camX, game->camY, camZ, game->angle, &roof[0]) &&
+                project_world_point_visible(x1, y1, z0, game->camX, game->camY, camZ, game->angle, &roof[1]) &&
+                project_world_point_visible(x1, y1, z1, game->camX, game->camY, camZ, game->angle, &roof[2]) &&
+                project_world_point_visible(x0, y1, z1, game->camX, game->camY, camZ, game->angle, &roof[3]))
+            {
+                draw_projected_colored_quad(r, roof, (SDL_Color){132, 78, 57, 255});
+            }
+
+            /* A 面：z 为常量，横跨 x 方向，和路的前进方向垂直。 */
+            if (project_world_point_visible(x0, y1, z0, game->camX, game->camY, camZ, game->angle, &faceA[0]) &&
+                project_world_point_visible(x1, y1, z0, game->camX, game->camY, camZ, game->angle, &faceA[1]) &&
+                project_world_point_visible(x1, y0, z0, game->camX, game->camY, camZ, game->angle, &faceA[2]) &&
+                project_world_point_visible(x0, y0, z0, game->camX, game->camY, camZ, game->angle, &faceA[3]))
+            {
+                draw_projected_textured_quad(r, houseA, faceA, (SDL_Color){255, 255, 255, 255});
+            }
+
+            /* B 面：x 为常量，沿 z 方向延伸，和路平行；选靠近道路的一侧。 */
+            if (project_world_point_visible(innerX, y1, z0, game->camX, game->camY, camZ, game->angle, &faceB[0]) &&
+                project_world_point_visible(innerX, y1, z1, game->camX, game->camY, camZ, game->angle, &faceB[1]) &&
+                project_world_point_visible(innerX, y0, z1, game->camX, game->camY, camZ, game->angle, &faceB[2]) &&
+                project_world_point_visible(innerX, y0, z0, game->camX, game->camY, camZ, game->angle, &faceB[3]))
+            {
+                draw_projected_textured_quad(r, houseB, faceB, (SDL_Color){215, 215, 215, 255});
+            }
+        }
+    }
+}
+
+/* 撞空气墙红边反馈。 */
+static void render_wall_feedback(SDL_Renderer *r, const RacingGame *game)
+{
+    int edge;
+    int a;
+
+    if (game->wallHitFrames <= 0)
+    {
+        return;
+    }
+    edge = WIN_WIDTH / 8;
+    a = game->wallHitFrames * 255 / AIR_WALL_FEEDBACK_FRAMES;
+    if (a > 200)
+    {
+        a = 200;
+    }
+    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(r, 255, 32, 32, a);
+    if (game->wallHitSide <= 0)
+    {
+        SDL_Rect rc = {0, 0, edge, WIN_HEIGHT};
+        SDL_RenderFillRect(r, &rc);
+    }
+    if (game->wallHitSide >= 0)
+    {
+        SDL_Rect rc = {WIN_WIDTH - edge, 0, edge, WIN_HEIGHT};
+        SDL_RenderFillRect(r, &rc);
+    }
+    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE);
+}
+
 /* SDL 桌面版的完整一帧：背景、赛道、道具、车体、HUD 和跳脸。 */
 void racing_sdl_render(RacingSdlRenderer *view, const RacingGame *game)
 {
@@ -1010,6 +1582,8 @@ void racing_sdl_render(RacingSdlRenderer *view, const RacingGame *game)
     }
 
     render_track(renderer, game);
+    render_houses_3d(renderer, game, view->houseA, view->houseB);
+    render_trees(renderer, game, view->tree);
 
     /* 收集物：地图“一路邮你”用北邮校徽，其余用奶龙。 */
     {
@@ -1052,6 +1626,7 @@ void racing_sdl_render(RacingSdlRenderer *view, const RacingGame *game)
     }
 
     draw_mode_overlay(view, game);
+    render_wall_feedback(renderer, game);
 
     /* 跳脸：地图“一路邮你”用校徽，其余用奶龙头。 */
     {

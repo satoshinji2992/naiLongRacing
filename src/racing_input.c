@@ -2,8 +2,8 @@
  * Racing 输入处理(fb 版,无 LVGL)
  *
  * 触摸(open /dev/input0):
- *  - 菜单屏(START / MAP_SELECT / CONTROL_SELECT):按屏分区映射
- *      主菜单:上半=关卡选择,下半=操作选择;
+ *  - 菜单屏(START / MAP_SELECT / CONTROL_SELECT / NETWORK_SELECT):按屏分区映射
+ *      主菜单:上/中/下=关卡选择/操作选择/网络语音;
  *      二级菜单:左 < / 右 > / 中间确认。(返回走按钮,不用触摸)
  *  - 游戏中·普通模式:左 1/3 左转、右 1/3 右转、中间 1/3 点一下切换 boost 开/关。
  *  - 游戏中·体感模式:不触摸转向(方向靠 JY60),按住屏幕任意处=boost,松开=关。
@@ -59,18 +59,23 @@ static void apply_menu_touch(int x, int y)
 {
     if (g_menu_screen == RACING_MODE_START)
     {
-        if (y < WIN_HEIGHT / 2)
+        if (y < WIN_HEIGHT / 3)
         {
-            g_input.mapSelect = true;       /* 上半:关卡选择 */
+            g_input.mapSelect = true;       /* 上:关卡选择 */
+        }
+        else if (y < (WIN_HEIGHT * 2) / 3)
+        {
+            g_input.controlSelect = true;   /* 中:操作选择 */
         }
         else
         {
-            g_input.controlSelect = true;   /* 下半:操作选择 */
+            g_input.networkSelect = true;   /* 下:网络/语音 */
         }
     }
-    else if (g_menu_screen == RACING_MODE_MAP_SELECT)
+    else if (g_menu_screen == RACING_MODE_MAP_SELECT ||
+             g_menu_screen == RACING_MODE_NETWORK_SELECT)
     {
-        /* 关卡选择:左 < / 右 > / 中间确认(浏览+预览式)。 */
+        /* 关卡/网络页:左 < / 右 > / 中间确认。网络页左右暂不动作。 */
         if (x < WIN_WIDTH / 3)
         {
             g_input.cyclePrev = true;
@@ -309,7 +314,8 @@ void racing_input_poll(void)
                    x, y, active_points, g_menu_screen, g_drive_mode);
             if (g_menu_screen == RACING_MODE_START ||
                 g_menu_screen == RACING_MODE_MAP_SELECT ||
-                g_menu_screen == RACING_MODE_CONTROL_SELECT)
+                g_menu_screen == RACING_MODE_CONTROL_SELECT ||
+                g_menu_screen == RACING_MODE_NETWORK_SELECT)
             {
                 apply_menu_touch(x, y);
             }
@@ -320,7 +326,8 @@ void racing_input_poll(void)
         } else if (flags & TOUCH_MOVE) {
             if (!(g_menu_screen == RACING_MODE_START ||
                   g_menu_screen == RACING_MODE_MAP_SELECT ||
-                  g_menu_screen == RACING_MODE_CONTROL_SELECT))
+                  g_menu_screen == RACING_MODE_CONTROL_SELECT ||
+                  g_menu_screen == RACING_MODE_NETWORK_SELECT))
             {
                 apply_drive_touch(x, y, false);  /* 游戏中 MOVE:普通模式实时更新转向 */
             }
@@ -347,6 +354,7 @@ RacingInput racing_input_get(void)
     g_input.restart = false;
     g_input.mapSelect = false;
     g_input.controlSelect = false;
+    g_input.networkSelect = false;
     g_input.back = false;
     g_input.cyclePrev = false;
     g_input.cycleNext = false;

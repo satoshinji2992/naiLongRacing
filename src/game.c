@@ -2,6 +2,7 @@
 
 #include <math.h>
 #include <stdlib.h>
+#include <string.h>
 
 typedef struct ProjectionContext
 {
@@ -252,6 +253,8 @@ static void reset_runtime_state(RacingGame *game)
     game->turnRight = false;
     game->isOut = false;
     game->isFlying = false;
+    game->wallHitFrames = 0;
+    game->wallHitSide = 0;
 }
 
 /* 摄像机高度贴着当前路面走，飞行状态则独立抬高。 */
@@ -434,6 +437,204 @@ static void update_movement(RacingGame *game, const RacingInput *input)
     }
 }
 
+static float slow_grass_half_width(const RacingGame *game)
+{
+    return game->roadWidth * SLOW_GRASS_HALF_SCALE;
+}
+
+static float air_wall_half_width(const RacingGame *game)
+{
+    return game->roadWidth * AIR_WALL_HALF_SCALE;
+}
+
+/* 路边树/房子:空气墙外随机分布,纯装饰无碰撞。centerWorldX = 路中心 ± (墙距+随机+半宽)。 */
+static Tree make_tree(float centerWorldX, int segment)
+{
+    Tree t;
+    t.centerWorldX = centerWorldX;
+    t.segment = segment;
+    t.segDist = 0;
+    t.visible = false;
+    return t;
+}
+
+static void build_trees(RacingGame *game)
+{
+    int i;
+    float wallHalf = air_wall_half_width(game);
+
+    for (i = 0; i < TREE_COUNT; i++)
+    {
+        int segment = rand() % ROAD_COUNT;
+        int side = (rand() & 1) ? 1 : -1;
+        int beyond = TREE_MIN_BEYOND + rand() % TREE_SPREAD;
+        float centerWorldX = game->roads[segment].x +
+                             side * (wallHalf + (float)beyond + TREE_WORLD_W / 2.0f);
+        game->trees[i] = make_tree(centerWorldX, segment);
+    }
+}
+
+static House make_house(float centerWorldX, int segment, int type, int side)
+{
+    House h;
+    h.centerWorldX = centerWorldX;
+    h.segment = segment;
+    h.type = type;
+    h.side = side;
+    h.segDist = 0;
+    h.visible = false;
+    return h;
+}
+
+static void build_houses(RacingGame *game)
+{
+    int i;
+    float wallHalf = air_wall_half_width(game);
+
+    for (i = 0; i < HOUSE_COUNT; i++)
+    {
+        int segment = rand() % ROAD_COUNT;
+        int side = (rand() & 1) ? 1 : -1;
+        int type = rand() & 1;
+        int beyond = HOUSE_MIN_BEYOND + rand() % HOUSE_SPREAD;
+        float centerWorldX = game->roads[segment].x +
+                             side * (wallHalf + (float)beyond + HOUSE_WORLD_W / 2.0f);
+        game->houses[i] = make_house(centerWorldX, segment, type, side);
+    }
+}
+
+/* 空气墙:把车钳在路缘外侧硬边界内,撞墙向内弹回 + 扣能量 + 触发红边反馈。 */
+static void apply_air_wall(RacingGame *game, int start)
+{
+    int centerX = game->roads[start].x;
+    float wallHalf = air_wall_half_width(game);
+    int leftWall = (int)(centerX - wallHalf);
+    int rightWall = (int)(centerX + wallHalf);
+    int side = 0;
+
+    if (game->camX <= leftWall)
+    {
+        game->camX = leftWall + AIR_WALL_BOUNCE;
+        side = -1;
+    }
+    else if (game->camX >= rightWall)
+    {
+        game->camX = rightWall - AIR_WALL_BOUNCE;
+        side = 1;
+    }
+
+    if (side != 0)
+    {
+        game->wallHitSide = side;
+        game->wallHitFrames = AIR_WALL_FEEDBACK_FRAMES;
+        game->energy -= AIR_WALL_ENERGY_COST;
+        if (game->energy < 0)
+        {
+            game->energy = 0;
+        }
+    }
+    else if (game->wallHitFrames > 0)
+    {
+        game->wallHitFrames--;
+    }
+}
+
+/* 每帧把视野内的树投成贴地 billboard 4 角(无 bankAngle,不随转向倾斜)。
+ * 纵向用本赛段路中心深度定位(避免侧向偏移导致深度失真而"飘"),横向按路宽偏移。 */
+static void project_trees(RacingGame *game, int start, const ProjectionContext *context)
+{
+    int i;
+    for (i = 0; i < TREE_COUNT; i++)
+    {
+        Tree *t = &game->trees[i];
+        int segDist = (t->segment - start + ROAD_COUNT) % ROAD_COUNT;
+        ProjectionContext ctx;
+        Point ground;
+        float roadW;
+        float lateral;
+        float baseX;
+        float baseY;
+        float sw;
+        float sh;
+
+        t->segDist = segDist;
+        t->visible = (segDist > 0 && segDist <= VIEW_DISTANCE);
+        if (!t->visible)
+        {
+            continue;
+        }
+
+        ctx = *context;
+        ctx.camZ = game->camZ - ((start + segDist >= ROAD_COUNT) ? TRACK_LENGTH : 0);
+
+        ground = make_point(game->roads[t->segment].x,
+                            game->roads[t->segment].y,
+                            game->roads[t->segment].z);
+        project_point(&ground, &ctx);
+
+        roadW = ground.scale * game->roadWidth * WIN_WIDTH / 2.0f;
+        lateral = (t->centerWorldX - ground.x) / game->roadWidth;
+        baseX = ground.X + lateral * roadW;
+        baseY = ground.Y;
+        sw = (TREE_WORLD_W / game->roadWidth) * roadW;
+        sh = ground.scale * TREE_WORLD_H * WIN_HEIGHT / 2.0f;
+
+        t->p[0].X = baseX - sw / 2.0f; t->p[0].Y = baseY;      t->p[0].tz = ground.tz;
+        t->p[1].X = baseX + sw / 2.0f; t->p[1].Y = baseY;      t->p[1].tz = ground.tz;
+        t->p[2].X = baseX + sw / 2.0f; t->p[2].Y = baseY - sh; t->p[2].tz = ground.tz;
+        t->p[3].X = baseX - sw / 2.0f; t->p[3].Y = baseY - sh; t->p[3].tz = ground.tz;
+    }
+}
+
+/* 每帧把视野内的房子 8 个世界角投影到屏幕(无 bankAngle)。渲染端按 corner[8] 组三个可见面。
+ * 角编号 c = (zr<<2)|(yr<<1)|xr:xr=0/1 → x 低/高,yr=0/1 → 底/顶,zr=0/1 → 近/远(z 低/高)。 */
+static void project_houses(RacingGame *game, int start, const ProjectionContext *context)
+{
+    int i;
+    for (i = 0; i < HOUSE_COUNT; i++)
+    {
+        House *h = &game->houses[i];
+        int segDist = (h->segment - start + ROAD_COUNT) % ROAD_COUNT;
+        ProjectionContext ctx;
+        const Road *r;
+        float cx;
+        float cyb;
+        float cz;
+        float xs[2];
+        float ys[2];
+        float zs[2];
+        int c;
+
+        h->segDist = segDist;
+        h->visible = (segDist > 0 && segDist <= VIEW_DISTANCE);
+        if (!h->visible)
+        {
+            continue;
+        }
+
+        ctx = *context;
+        ctx.camZ = game->camZ - ((start + segDist >= ROAD_COUNT) ? TRACK_LENGTH : 0);
+
+        r = &game->roads[h->segment];
+        cx = h->centerWorldX;
+        cyb = r->y;
+        cz = r->z;
+        xs[0] = cx - HOUSE_WORLD_W / 2.0f;
+        xs[1] = cx + HOUSE_WORLD_W / 2.0f;
+        ys[0] = cyb;
+        ys[1] = cyb + HOUSE_WORLD_H;
+        zs[0] = cz - HOUSE_WORLD_D / 2.0f;
+        zs[1] = cz + HOUSE_WORLD_D / 2.0f;
+
+        for (c = 0; c < 8; c++)
+        {
+            Point p = make_point(xs[c & 1], ys[(c >> 1) & 1], zs[(c >> 2) & 1]);
+            project_point(&p, &ctx);
+            h->corner[c] = p;
+        }
+    }
+}
+
 void racing_game_init(RacingGame *game, unsigned int seed)
 {
     if (game == NULL)
@@ -444,9 +645,13 @@ void racing_game_init(RacingGame *game, unsigned int seed)
     srand(seed);
     game->mapIndex = 0;
     game->menuControlMode = 0;
+    game->voiceState = 0;
+    game->voiceText[0] = '\0';
     game->roadWidth = (float)ROAD_WIDTH * g_track_params[0].widthScale;
     game->collectibleRespawnMs = 0;
     build_track(game->roads, game->mapIndex);
+    build_trees(game);
+    build_houses(game);
     reset_runtime_state(game);
     reset_collectibles(game->collectibles, game->roads, game->collectiblePositions, game->roadWidth);
 }
@@ -469,6 +674,8 @@ void racing_game_set_map(RacingGame *game, int mapIndex)
     game->roadWidth = (float)ROAD_WIDTH * g_track_params[mapIndex].widthScale;
     game->collectibleRespawnMs = 0;
     build_track(game->roads, mapIndex);
+    build_trees(game);
+    build_houses(game);
     reset_runtime_state(game);
     reset_collectibles(game->collectibles, game->roads, game->collectiblePositions, game->roadWidth);
 }
@@ -588,6 +795,13 @@ void racing_game_update(RacingGame *game, const RacingInput *input, int deltaMs)
         return;
     }
 
+    /* 开始界面 → 进入网络/小智语音启动界面。 */
+    if (localInput.networkSelect && game->mode == RACING_MODE_START)
+    {
+        game->mode = RACING_MODE_NETWORK_SELECT;
+        return;
+    }
+
     /* 操作选择界面：左右切换操控方式(Original/Gyro/Test)，Enter 确认;选 Test 直接进测试屏,
      * 选 Original/Gyro 返回主菜单(设为发车用模式)。Esc 返回。 */
     if (game->mode == RACING_MODE_CONTROL_SELECT)
@@ -632,6 +846,16 @@ void racing_game_update(RacingGame *game, const RacingInput *input, int deltaMs)
         return;
     }
 
+    /* 网络页只负责提示和触发外部脚本;脚本执行在平台主循环里做。 */
+    if (game->mode == RACING_MODE_NETWORK_SELECT)
+    {
+        if (localInput.back || localInput.pause)
+        {
+            game->mode = RACING_MODE_START;
+        }
+        return;
+    }
+
     if (localInput.start && game->mode == RACING_MODE_START)
     {
         racing_game_start(game);
@@ -672,14 +896,17 @@ void racing_game_update(RacingGame *game, const RacingInput *input, int deltaMs)
     refresh_camera_height(game);
 
     start = racing_game_start_segment(game);
-    game->isOut = game->camX >= game->roads[start].x + game->roadWidth / 1.5f ||
-                  game->camX <= game->roads[start].x - game->roadWidth / 1.5f;
+    apply_air_wall(game, start);   /* 空气墙:钳 camX + 弹回 + 红边反馈(在投影前,用钳后位置) */
+    game->isOut = game->camX >= game->roads[start].x + slow_grass_half_width(game) ||
+                  game->camX <= game->roads[start].x - slow_grass_half_width(game);
 
     context = make_projection_context(game->camX, game->camY, game->camZ, game->angle);
     for (int i = 0; i < COLLECTIBLE_COUNT; i++)
     {
         project_nailong(&game->collectibles[i], &context);
     }
+    project_trees(game, start, &context);
+    project_houses(game, start, &context);
 
     if (game->hitFrames > 0)
     {

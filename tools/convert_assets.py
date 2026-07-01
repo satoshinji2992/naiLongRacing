@@ -34,6 +34,10 @@ TARGETS = [
     # 地图“一路邮你”：北邮校徽收集物（方形）+ 北邮校门背景（全屏）
     ("nailong_bupt.png",  160, 160, "nailong_bupt.raw"),
     ("bg_bupt.jpg",       480, 320, "bg_bupt.raw"),
+    # 路边装饰：透明 PNG，板端 framebuffer 直接 alpha 混合。
+    ("tree.png",          160, 160, "tree.raw"),
+    ("house_a.png",       160, 240, "house_a.raw"),
+    ("house_b.png",       120, 320, "house_b.raw"),
 ]
 
 

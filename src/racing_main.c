@@ -19,6 +19,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
@@ -26,6 +27,7 @@
 #include "jy60.h"
 #include "render_fb.h"
 #include "racing_input.h"
+#include "racing_voice.h"
 
 /****************************************************************************
  * Pre-processor Definitions
@@ -35,6 +37,14 @@
 
 #if defined(CONFIG_BOARDCTL) && !defined(CONFIG_NSH_ARCHINIT)
 #  define NEED_BOARDINIT 1
+#endif
+
+#ifndef CONFIG_EXAMPLES_RACING_VOICE_START_SCRIPT
+#  define CONFIG_EXAMPLES_RACING_VOICE_START_SCRIPT "sh /data/racing_xiaozhi.sh bridge"
+#endif
+
+#ifndef CONFIG_SYSTEM_SYSTEM
+#  define CONFIG_SYSTEM_SYSTEM 0
 #endif
 
 /****************************************************************************
@@ -65,6 +75,24 @@ static long monotonic_ms(void)
   struct timespec ts;
   clock_gettime(CLOCK_MONOTONIC, &ts);
   return (long)ts.tv_sec * 1000L + ts.tv_nsec / 1000000L;
+}
+
+static void launch_voice_script(void)
+{
+#if defined(CONFIG_EXAMPLES_RACING_VOICE) && CONFIG_EXAMPLES_RACING_VOICE
+#  if CONFIG_SYSTEM_SYSTEM
+  int ret;
+
+  printf("[RACING] launch XiaoZhi script: %s\n",
+         CONFIG_EXAMPLES_RACING_VOICE_START_SCRIPT);
+  ret = system(CONFIG_EXAMPLES_RACING_VOICE_START_SCRIPT);
+  printf("[RACING] XiaoZhi script exit=%d\n", ret);
+#  else
+  printf("[RACING] CONFIG_SYSTEM_SYSTEM is disabled; run the script from NSH.\n");
+#  endif
+#else
+  printf("[RACING] voice disabled; enable CONFIG_EXAMPLES_RACING_VOICE first.\n");
+#endif
 }
 
 /****************************************************************************
@@ -116,6 +144,7 @@ int main(int argc, FAR char *argv[])
     }
 
   racing_input_init();
+  racing_voice_init();
   jy60_init();
 
   printf("[RACING] running. Select Original / Gyro / Test mode on screen.\n");
@@ -146,12 +175,17 @@ int main(int argc, FAR char *argv[])
 
       /* 菜单屏:按当前 game.mode 映射触摸;游戏/暂停传 -1(驾驶按模式驱动)。
        * 不能传 0:RACING_MODE_START==0,会和主菜单冲突导致游戏中触摸失效。 */
-      racing_input_set_menu_screen(app_mode == RACING_APP_MENU ? game.mode : -1);
+      racing_input_set_menu_screen(app_mode == RACING_APP_MENU ? (int)game.mode : -1);
       racing_input_set_drive_mode(app_mode == RACING_APP_GYRO);
       racing_input_poll();
+      racing_voice_poll();
       jy60_poll();
       jy60_get_sample(&jy60_sample);
       input = racing_input_get();
+      racing_voice_apply_input(&input);
+      game.voiceState = racing_voice_state();
+      snprintf(game.voiceText, sizeof(game.voiceText), "%s",
+               racing_voice_last_text());
 
       if (app_mode == RACING_APP_MENU)
         {
@@ -183,6 +217,37 @@ int main(int argc, FAR char *argv[])
               game.mode = RACING_MODE_START;
               racing_input_reset();
               printf("[RACING] Test mode (from control select).\n");
+            }
+          else if (game.mode == RACING_MODE_NETWORK_SELECT && input.start)
+            {
+              launch_voice_script();
+              racing_input_reset();
+              racing_fb_render_menu(view);
+            }
+          else if ((game.mode == RACING_MODE_START ||
+                    game.mode == RACING_MODE_CONTROL_SELECT) && input.ctrl1)
+            {
+              game.menuControlMode = 0;
+              game.mode = RACING_MODE_START;
+              racing_input_reset();
+              printf("[RACING] control -> Original.\n");
+            }
+          else if ((game.mode == RACING_MODE_START ||
+                    game.mode == RACING_MODE_CONTROL_SELECT) && input.ctrl2)
+            {
+              game.menuControlMode = 1;
+              game.mode = RACING_MODE_START;
+              racing_input_reset();
+              printf("[RACING] control -> Gyro.\n");
+            }
+          else if ((game.mode == RACING_MODE_START ||
+                    game.mode == RACING_MODE_CONTROL_SELECT) && input.ctrl3)
+            {
+              game.menuControlMode = 2;
+              app_mode = RACING_APP_TEST;
+              game.mode = RACING_MODE_START;
+              racing_input_reset();
+              printf("[RACING] Test mode.\n");
             }
           else
             {
@@ -292,6 +357,7 @@ int main(int argc, FAR char *argv[])
 
   printf("[RACING] exiting.\n");
   jy60_deinit();
+  racing_voice_deinit();
   racing_input_deinit();
   racing_fb_delete(view);
   return 0;

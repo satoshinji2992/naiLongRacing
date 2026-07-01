@@ -71,4 +71,37 @@ config EXAMPLES_RACING_DATA_ROOT
 	string "Racing Data Root"
 	default "/data"
 
+config EXAMPLES_RACING_VOICE
+	bool "Enable XiaoZhi voice control"
+	default n
+	depends on NET && NET_UDP
+	---help---
+		Receive XiaoZhi/control_center UI IPC JSON on localhost and map
+		recognized text to Racing commands. This reuses the same UDP IPC
+		ports as the lvgldemo XiaoZhi UI bridge.
+
+config EXAMPLES_RACING_VOICE_LOCAL_PORT
+	int "Racing voice local UI IPC port"
+	default 5679
+	depends on EXAMPLES_RACING_VOICE
+	---help---
+		Local UDP port receiving UI JSON from control_center. lvgldemo uses
+		UI_PORT_DOWN=5679.
+
+config EXAMPLES_RACING_VOICE_REMOTE_PORT
+	int "Racing voice control_center UI IPC port"
+	default 5678
+	depends on EXAMPLES_RACING_VOICE
+	---help---
+		control_center UI port used for sending commands back. lvgldemo uses
+		UI_PORT_UP=5678.
+
+config EXAMPLES_RACING_VOICE_START_SCRIPT
+	string "Racing XiaoZhi startup script"
+	default "sh /data/racing_xiaozhi.sh bridge"
+	depends on EXAMPLES_RACING_VOICE && SYSTEM_SYSTEM
+	---help---
+		Script launched from the Racing Network menu. Keep the script short:
+		start WiFi/XiaoZhi helper tasks in the background and return to Racing.
+
 endif

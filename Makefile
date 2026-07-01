@@ -38,6 +38,7 @@ CSRCS += src/font.c
 # Touch + GPIO input handler
 CSRCS += src/racing_input.c
 CSRCS += src/jy60.c
+CSRCS += src/racing_voice.c
 
 # Main entry
 MAINSRC = src/racing_main.c

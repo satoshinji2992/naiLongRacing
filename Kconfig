@@ -98,10 +98,11 @@ config EXAMPLES_RACING_VOICE_REMOTE_PORT
 
 config EXAMPLES_RACING_VOICE_START_SCRIPT
 	string "Racing XiaoZhi startup script"
-	default "sh /data/racing_xiaozhi.sh bridge"
+	default ""
 	depends on EXAMPLES_RACING_VOICE && SYSTEM_SYSTEM
 	---help---
-		Script launched from the Racing Network menu. Keep the script short:
-		start WiFi/XiaoZhi helper tasks in the background and return to Racing.
+		Optional script launched from the Racing Network menu. Leave this
+		empty when Racing itself is started by /data/racing_xiaozhi.sh,
+		otherwise control_center may be started twice and UDP bind will fail.
 
 endif

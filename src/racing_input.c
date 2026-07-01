@@ -362,6 +362,8 @@ RacingInput racing_input_get(void)
     g_input.ctrl1 = false;
     g_input.ctrl2 = false;
     g_input.ctrl3 = false;
+    g_input.nailongCheat = false;
+    g_input.voiceBoost = false;
     return input;
 }
 

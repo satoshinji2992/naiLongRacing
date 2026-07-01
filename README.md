@@ -101,12 +101,13 @@ m menuconfig   # 进入 Application Configuration → Examples → Racing Game D
 
 ### 语音控制(参考 lvgldemo / XiaoZhi)
 
-Racing 不引入 LVGL,只复用 lvgldemo 的小智链路: `arecord`/`sound_app`
+Racing 不引入 LVGL,只复用 lvgldemo 的小智链路: `arecord`/`aplay`
 采集语音 → `control_center` WebSocket → 识别文本经本机 UDP UI IPC 下发。
 启用 `CONFIG_EXAMPLES_RACING_VOICE=y` 后,Racing 监听 `127.0.0.1:5679`,
-解析 `{"text":"..."}` 并映射成一次性游戏输入。主菜单会显示
+只解析 `{"type":"stt","text":"..."}` 并映射成游戏命令。主菜单会显示
 `Voice: Listening / Speaking / Connecting / Activating / Fatal error` 等状态,
-也会显示最近一条识别文本。
+也会显示最近一条识别文本。`control_center` 默认以 Racing 命令模式编译:
+只转发 STT 识别文本,不播放小智 AI 的 TTS 语音回复。
 
 本仓库提供示例脚本 `scripts/racing_xiaozhi.sh`,固定连接热点:
 ```text
@@ -114,24 +115,17 @@ SSID=iphone17
 PASSWORD=12345678
 ```
 
-放到板端 `/data/racing_xiaozhi.sh` 后有两种用法:
+放到板端 `/data/racing_xiaozhi.sh` 后从 NSH 启动一次即可:
 ```bash
-sh /data/racing_xiaozhi.sh bridge  # 只启动 WiFi + control_center + sound_app,供 Racing 主菜单调用
-sh /data/racing_xiaozhi.sh         # 启动桥接后再启动 racing,适合 NSH 一键启动
+sh /data/racing_xiaozhi.sh
 ```
 
-Racing 主菜单里的 **NETWORK** 会执行 Kconfig 中的
-`EXAMPLES_RACING_VOICE_START_SCRIPT`,默认是
-`sh /data/racing_xiaozhi.sh bridge`。常用命令词:
-- “开始/出发/继续”:开始或继续游戏。
-- “暂停”:暂停。
-- “重来/重新开始”:重新开局。
-- “回菜单/主菜单”:返回主菜单。
-- “网络/小智/语音设置”:进入网络/语音页。
-- “简单/中等/困难”:切换地图。
-- “原始模式/陀螺仪模式/测试模式”:切换控制方式。
-- “加速/冲刺/氮气”:触发一次 boost。
-- “起飞/飞行”:触发 fly。
+脚本会先连接 WiFi,再启动 `arecord` / `aplay` / `control_center`,最后启动
+`racing`。不要在 Racing 运行中再次启动这个脚本,否则第二个 `control_center`
+会抢 5676/5678 UDP 端口并出现 `Failed to bind socket`。Racing 主菜单里的
+**NETWORK** 只显示小智状态和最近识别文本。常用命令词:
+- “我是奶龙”:开启无限能量作弊。
+- “加速”:触发约 2.5 秒 boost。
 
 ### SPI 写屏时钟(性能关键)
 LCD 走 SPI,写屏时钟决定帧率。已做成正式 Kconfig 项

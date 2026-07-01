@@ -1167,6 +1167,8 @@ static void render_energy(RacingFbView *v, int energy)
     int panelH = BAR_COUNT * BAR_H + (BAR_COUNT - 1) * BAR_GAP + 12;
     int panelX = WIN_WIDTH - panelW - 10;
     int panelY = WIN_HEIGHT - panelH - 10;
+    /* "我是奶龙" 作弊:能量条变黄。 */
+    uint32_t fill = (v->game != NULL && v->game->infiniteEnergy) ? 0xffd23cu : 0x1d63ffu;
 
     if (bars < 0) { bars = 0; }
     if (bars > BAR_COUNT) { bars = BAR_COUNT; }
@@ -1184,7 +1186,7 @@ static void render_energy(RacingFbView *v, int energy)
     }
     for (int i = 0; i < bars; i++) {
         int sy = panelY + 6 + (BAR_COUNT - 1 - i) * (BAR_H + BAR_GAP);
-        fb_fill_rect(v, panelX + 6, sy, panelX + 6 + BAR_W - 1, sy + BAR_H - 1, 0x1d63ffu);
+        fb_fill_rect(v, panelX + 6, sy, panelX + 6 + BAR_W - 1, sy + BAR_H - 1, fill);
     }
 }
 
@@ -1795,7 +1797,7 @@ void racing_fb_render_menu(RacingFbView *v)
         fb_draw_text_centered(v, WIN_WIDTH / 2, 18, "NETWORK / VOICE", 0xffffffu);
         snprintf(sbuf, sizeof(sbuf), "Voice: %s", voice_state_name(g->voiceState));
         fb_draw_text_centered(v, WIN_WIDTH / 2, 52, sbuf, voice_state_color(g->voiceState));
-        render_button(v, bx, 92, bw, bh, "START BRIDGE", "connect iphone17",
+        render_button(v, bx, 92, bw, bh, "VOICE STATUS", "started before racing",
                       0x55d37au);
         render_button(v, bx, 164, bw, bh, "WIFI", "SSID iphone17 / 12345678",
                       0x47a8ffu);
@@ -1803,7 +1805,7 @@ void racing_fb_render_menu(RacingFbView *v)
             fb_draw_text_centered(v, WIN_WIDTH / 2, 238, g->voiceText, 0xe6ecffu);
         }
         fb_draw_text_centered(v, WIN_WIDTH / 2, WIN_HEIGHT - 38,
-                              "center: run script | Btn2/top: back", 0xbfd1ffu);
+                              "run sh /data/racing_xiaozhi.sh once", 0xbfd1ffu);
         fb_draw_text_centered(v, WIN_WIDTH / 2, WIN_HEIGHT - 16,
                               "voice: say 'network', then 'start'", 0xbfd1ffu);
         fb_present(v);

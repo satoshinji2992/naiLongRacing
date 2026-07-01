@@ -1,6 +1,7 @@
 #include "game.h"
 
 #include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -646,6 +647,7 @@ void racing_game_init(RacingGame *game, unsigned int seed)
     game->mapIndex = 0;
     game->menuControlMode = 0;
     game->voiceState = 0;
+    game->infiniteEnergy = false;
     game->voiceText[0] = '\0';
     game->roadWidth = (float)ROAD_WIDTH * g_track_params[0].widthScale;
     game->collectibleRespawnMs = 0;
@@ -758,6 +760,17 @@ void racing_game_update(RacingGame *game, const RacingInput *input, int deltaMs)
     {
         racing_game_reset_to_start(game);
         return;
+    }
+
+    /* 语音"我是奶龙":开启无限能量作弊(任何时候说都生效,一旦开启持续整局)。 */
+    if (localInput.nailongCheat)
+    {
+        if (!game->infiniteEnergy)
+        {
+            printf("[RACING] nailong cheat: infinite energy ON\n");
+        }
+        game->infiniteEnergy = true;
+        game->energy = 1000;
     }
 
     /* 1/2/3 任意时刻都可换图（切到不同的图才动作）。
@@ -907,6 +920,12 @@ void racing_game_update(RacingGame *game, const RacingInput *input, int deltaMs)
     }
     project_trees(game, start, &context);
     project_houses(game, start, &context);
+
+    /* 无限能量:把 boost/撞墙扣掉的能量强制补满(充满十格)。 */
+    if (game->infiniteEnergy)
+    {
+        game->energy = 1000;
+    }
 
     if (game->hitFrames > 0)
     {

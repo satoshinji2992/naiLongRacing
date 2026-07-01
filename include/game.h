@@ -87,6 +87,8 @@ typedef struct RacingInput {
     bool ctrl1;           /* 操作选择:直接选第 1 项(Original) */
     bool ctrl2;           /* 操作选择:直接选第 2 项(Gyro) */
     bool ctrl3;           /* 操作选择:直接选第 3 项(Test) */
+    bool nailongCheat;    /* 语音"我是奶龙":开启无限能量作弊 */
+    bool voiceBoost;      /* 语音"加速":短时间 boost */
 } RacingInput;
 
 typedef struct RacingGame {
@@ -112,6 +114,7 @@ typedef struct RacingGame {
     bool isOut;
     bool isFlying;
     bool boosting;          /* 本帧 boost 是否生效(供 HUD 显示) */
+    bool infiniteEnergy;    /* "我是奶龙" 作弊:能量无限(渲染端读,黄色显示) */
     int wallHitFrames;      /* 撞空气墙红边反馈剩余帧(渲染端读) */
     int wallHitSide;        /* -1=撞左墙 +1=撞右墙 0=无 */
     int mapIndex;

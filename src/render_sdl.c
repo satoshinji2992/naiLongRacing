@@ -355,7 +355,7 @@ static void draw_text(SDL_Renderer *renderer, TTF_Font *font, const char *text, 
 }
 
 /* 右下角能量条，空槽和已满槽分开画，便于低成本更新。 */
-static void draw_energy(SDL_Renderer *renderer, int energy)
+static void draw_energy(SDL_Renderer *renderer, int energy, bool infinite)
 {
     enum
     {
@@ -399,7 +399,14 @@ static void draw_energy(SDL_Renderer *renderer, int energy)
     {
         int y = panelY + 6 + (BAR_COUNT - 1 - i) * (BAR_H + BAR_GAP);
         SDL_Rect bar = {panelX + 6, y, BAR_W, BAR_H};
-        SDL_SetRenderDrawColor(renderer, 29, 99, 255, 255);
+        if (infinite)
+        {
+            SDL_SetRenderDrawColor(renderer, 255, 210, 60, 255);   /* "我是奶龙" 作弊:黄色 */
+        }
+        else
+        {
+            SDL_SetRenderDrawColor(renderer, 29, 99, 255, 255);
+        }
         SDL_RenderFillRect(renderer, &bar);
     }
 }
@@ -674,7 +681,7 @@ static void draw_mode_overlay(RacingSdlRenderer *view, const RacingGame *game)
         draw_text_centered(r, font, "网络语音 — Network / Voice", 28, body);
         snprintf(buf, sizeof(buf), "Voice: %s", voice_state_name_sdl(game->voiceState));
         draw_text_centered(r, font, buf, 70, (SDL_Color){120, 230, 140, 255});
-        draw_button(r, WIN_WIDTH / 2 - 142, 108, 284, 46, "Enter  Start Bridge", font, body, true);
+        draw_button(r, WIN_WIDTH / 2 - 142, 108, 284, 46, "Voice bridge starts before Racing", font, body, true);
         draw_text_centered(r, font, "SSID iphone17 / 12345678", 176, hint);
         draw_text_centered(r, font, "Esc Back", WIN_HEIGHT - 24, hint);
         return;
@@ -1605,7 +1612,7 @@ void racing_sdl_render(RacingSdlRenderer *view, const RacingGame *game)
         draw_text(renderer, view->font, text, WIN_WIDTH / 2 - 28, 6, red);
         snprintf(text, sizeof(text), "%ds", game->elapsedMs / 1000);
         draw_text(renderer, view->font, text, WIN_WIDTH / 2 - 14, 28, cyan);
-        draw_energy(renderer, game->energy);
+        draw_energy(renderer, game->energy, game->infiniteEnergy);
         if (game->boosting)
         {
             draw_text(renderer, view->font, "BOOST", WIN_WIDTH - 76, 6,

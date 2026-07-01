@@ -44,8 +44,10 @@ static int g_voice_fd = -1;
 static struct sockaddr_in g_voice_remote;
 static RacingInput g_voice_input;
 static char g_last_text[128];
+static char g_pending_command[sizeof(g_last_text)];
 static int g_voice_state = VOICE_STATE_UNKNOWN;
 static long g_next_accept_ms;
+static long g_voice_boost_until_ms;
 
 static long voice_monotonic_ms(void)
 {
@@ -68,176 +70,58 @@ static void voice_send_state(const char *state)
 #endif
 }
 
-static bool contains_any(const char *text, const char *const *words, int count)
+static bool is_nailong_phrase(const char *text)
 {
-  int i;
-
   if (text == NULL)
     {
       return false;
     }
 
-  for (i = 0; i < count; i++)
+  return strcmp(text, "我是奶龙") == 0 ||
+         strcmp(text, "我是奶龙。") == 0 ||
+         strcmp(text, "我是奶龙！") == 0 ||
+         strcmp(text, "我是奶龙!") == 0;
+}
+
+static bool is_boost_phrase(const char *text)
+{
+  if (text == NULL)
     {
-      if (strstr(text, words[i]) != NULL)
-        {
-          return true;
-        }
+      return false;
     }
 
-  return false;
+  return strcmp(text, "加速") == 0 ||
+         strcmp(text, "加速。") == 0 ||
+         strcmp(text, "加速！") == 0 ||
+         strcmp(text, "加速!") == 0;
 }
 
 static bool voice_mark_command(const char *text)
 {
-  static const char *const start_words[] =
-    { "开始", "出发", "继续", "启动", "开跑", "发车" };
-  static const char *const pause_words[] =
-    { "暂停", "停一下", "等一下", "先停" };
-  static const char *const restart_words[] =
-    { "重来", "重新开始", "再来一局", "重新跑" };
-  static const char *const menu_words[] =
-    { "回菜单", "主菜单", "返回菜单", "回主页" };
-  static const char *const back_words[] =
-    { "返回", "回去", "上一页" };
-  static const char *const map_select_words[] =
-    { "选地图", "选择地图", "地图选择", "关卡选择", "换地图" };
-  static const char *const control_select_words[] =
-    { "选操作", "选择操作", "操作选择", "选择模式", "控制方式",
-      "操控方式" };
-  static const char *const network_select_words[] =
-    { "网络", "联网", "连接网络", "网络设置", "小智", "语音设置",
-      "启动语音" };
-  static const char *const prev_words[] =
-    { "上一个", "上个", "上一项", "上一张" };
-  static const char *const next_words[] =
-    { "下一个", "下个", "下一项", "下一张" };
-  static const char *const easy_words[] =
-    { "简单", "容易", "第一张", "地图一", "一号地图" };
-  static const char *const medium_words[] =
-    { "中等", "普通", "第二张", "地图二", "二号地图" };
-  static const char *const hard_words[] =
-    { "困难", "难", "第三张", "地图三", "三号地图" };
-  static const char *const original_words[] =
-    { "原始模式", "普通模式", "触摸模式", "手动模式", "普通操作" };
-  static const char *const gyro_words[] =
-    { "陀螺仪", "体感", "体感模式", "重力感应", "陀螺仪模式" };
-  static const char *const test_words[] =
-    { "测试模式", "传感器测试", "陀螺仪测试" };
-  static const char *const boost_words[] =
-    { "加速", "冲刺", "氮气", "boost" };
-  static const char *const fly_words[] =
-    { "飞", "起飞", "飞行", "跳" };
-  bool matched = false;
-
   if (text == NULL || text[0] == '\0')
     {
       return false;
     }
 
-  if (contains_any(text, menu_words, sizeof(menu_words) / sizeof(menu_words[0])))
+  /* 唯一识别词:"我是奶龙" -> 开启无限能量作弊(充满十格 + 黄色显示)。 */
+  if (is_nailong_phrase(text))
     {
-      g_voice_input.toMenu = true;
-      g_voice_input.back = true;
-      matched = true;
-    }
-  else if (contains_any(text, back_words, sizeof(back_words) / sizeof(back_words[0])))
-    {
-      g_voice_input.back = true;
-      matched = true;
-    }
-  if (contains_any(text, restart_words, sizeof(restart_words) / sizeof(restart_words[0])))
-    {
-      g_voice_input.restart = true;
-      matched = true;
-    }
-  if (contains_any(text, pause_words, sizeof(pause_words) / sizeof(pause_words[0])))
-    {
-      g_voice_input.pause = true;
-      matched = true;
-    }
-  if (contains_any(text, start_words, sizeof(start_words) / sizeof(start_words[0])))
-    {
-      g_voice_input.start = true;
-      matched = true;
+      g_voice_input.nailongCheat = true;
+      snprintf(g_pending_command, sizeof(g_pending_command), "%s", text);
+      return true;
     }
 
-  if (contains_any(text, map_select_words,
-                   sizeof(map_select_words) / sizeof(map_select_words[0])))
+  if (is_boost_phrase(text))
     {
-      g_voice_input.mapSelect = true;
-      matched = true;
-    }
-  if (contains_any(text, control_select_words,
-                   sizeof(control_select_words) / sizeof(control_select_words[0])))
-    {
-      g_voice_input.controlSelect = true;
-      matched = true;
-    }
-  if (contains_any(text, network_select_words,
-                   sizeof(network_select_words) / sizeof(network_select_words[0])))
-    {
-      g_voice_input.networkSelect = true;
-      matched = true;
-    }
-  if (contains_any(text, prev_words, sizeof(prev_words) / sizeof(prev_words[0])))
-    {
-      g_voice_input.cyclePrev = true;
-      matched = true;
-    }
-  if (contains_any(text, next_words, sizeof(next_words) / sizeof(next_words[0])))
-    {
-      g_voice_input.cycleNext = true;
-      matched = true;
+      long now = voice_monotonic_ms();
+
+      g_voice_input.voiceBoost = true;
+      g_voice_boost_until_ms = now + 2500;
+      snprintf(g_pending_command, sizeof(g_pending_command), "%s", text);
+      return true;
     }
 
-  if (contains_any(text, easy_words, sizeof(easy_words) / sizeof(easy_words[0])))
-    {
-      g_voice_input.map1 = true;
-      matched = true;
-    }
-  else if (contains_any(text, medium_words, sizeof(medium_words) / sizeof(medium_words[0])))
-    {
-      g_voice_input.map2 = true;
-      matched = true;
-    }
-  else if (contains_any(text, hard_words, sizeof(hard_words) / sizeof(hard_words[0])))
-    {
-      g_voice_input.map3 = true;
-      matched = true;
-    }
-
-  if (contains_any(text, original_words, sizeof(original_words) / sizeof(original_words[0])))
-    {
-      g_voice_input.controlSelect = true;
-      g_voice_input.ctrl1 = true;
-      matched = true;
-    }
-  else if (contains_any(text, gyro_words, sizeof(gyro_words) / sizeof(gyro_words[0])))
-    {
-      g_voice_input.controlSelect = true;
-      g_voice_input.ctrl2 = true;
-      matched = true;
-    }
-  else if (contains_any(text, test_words, sizeof(test_words) / sizeof(test_words[0])))
-    {
-      g_voice_input.controlSelect = true;
-      g_voice_input.ctrl3 = true;
-      matched = true;
-    }
-
-  if (contains_any(text, boost_words, sizeof(boost_words) / sizeof(boost_words[0])))
-    {
-      g_voice_input.boost = true;
-      matched = true;
-    }
-  if (contains_any(text, fly_words, sizeof(fly_words) / sizeof(fly_words[0])))
-    {
-      g_voice_input.fly = true;
-      matched = true;
-    }
-
-  return matched;
+  return false;
 }
 
 static int json_get_string(const char *json, const char *key, char *out, size_t outlen)
@@ -322,18 +206,35 @@ static int json_get_int(const char *json, const char *key, int *value)
 static void voice_process_json(char *buffer)
 {
   char text[sizeof(g_last_text)];
+  char type[16];
   int state;
   long now = voice_monotonic_ms();
+  bool is_stt = false;
+  bool has_type = false;
 
   if (json_get_int(buffer, "state", &state) == 0)
     {
       g_voice_state = state;
     }
 
+  if (json_get_string(buffer, "type", type, sizeof(type)) == 0)
+    {
+      has_type = true;
+      is_stt = strcmp(type, "stt") == 0;
+    }
+
   if (json_get_string(buffer, "text", text, sizeof(text)) == 0)
     {
       snprintf(g_last_text, sizeof(g_last_text), "%s", text);
-      if (now >= g_next_accept_ms)
+      if (!has_type)
+        {
+          printf("[RACING-VOICE] legacy text ignored: %s\n", text);
+        }
+      else if (!is_stt)
+        {
+          printf("[RACING-VOICE] %s text: %s\n", type, text);
+        }
+      else if (now >= g_next_accept_ms)
         {
           if (voice_mark_command(text))
             {
@@ -436,31 +337,35 @@ void racing_voice_poll(void)
 
 void racing_voice_apply_input(RacingInput *input)
 {
+  bool new_command;
+  bool boost_active;
+
   if (input == NULL)
     {
       return;
     }
 
-  input->boost = input->boost || g_voice_input.boost;
-  input->fly = input->fly || g_voice_input.fly;
-  input->start = input->start || g_voice_input.start;
-  input->restart = input->restart || g_voice_input.restart;
-  input->pause = input->pause || g_voice_input.pause;
-  input->map1 = input->map1 || g_voice_input.map1;
-  input->map2 = input->map2 || g_voice_input.map2;
-  input->map3 = input->map3 || g_voice_input.map3;
-  input->mapSelect = input->mapSelect || g_voice_input.mapSelect;
-  input->controlSelect = input->controlSelect || g_voice_input.controlSelect;
-  input->networkSelect = input->networkSelect || g_voice_input.networkSelect;
-  input->back = input->back || g_voice_input.back;
-  input->cyclePrev = input->cyclePrev || g_voice_input.cyclePrev;
-  input->cycleNext = input->cycleNext || g_voice_input.cycleNext;
-  input->toMenu = input->toMenu || g_voice_input.toMenu;
-  input->ctrl1 = input->ctrl1 || g_voice_input.ctrl1;
-  input->ctrl2 = input->ctrl2 || g_voice_input.ctrl2;
-  input->ctrl3 = input->ctrl3 || g_voice_input.ctrl3;
+  new_command = g_voice_input.nailongCheat || g_voice_input.voiceBoost;
+  boost_active = g_voice_boost_until_ms > voice_monotonic_ms();
+
+  if (boost_active)
+    {
+      g_voice_input.voiceBoost = true;
+    }
+
+  /* 语音只处理命令词,其它输入都由触摸/按键产生。 */
+  if (new_command)
+    {
+      printf("[RACING-VOICE] apply command: %s\n", g_pending_command);
+    }
+  input->nailongCheat = input->nailongCheat || g_voice_input.nailongCheat;
+  input->voiceBoost = input->voiceBoost || g_voice_input.voiceBoost;
 
   memset(&g_voice_input, 0, sizeof(g_voice_input));
+  if (!boost_active)
+    {
+      g_pending_command[0] = '\0';
+    }
 }
 
 const char *racing_voice_last_text(void)

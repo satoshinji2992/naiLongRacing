@@ -40,7 +40,7 @@
 #endif
 
 #ifndef CONFIG_EXAMPLES_RACING_VOICE_START_SCRIPT
-#  define CONFIG_EXAMPLES_RACING_VOICE_START_SCRIPT "sh /data/racing_xiaozhi.sh bridge"
+#  define CONFIG_EXAMPLES_RACING_VOICE_START_SCRIPT ""
 #endif
 
 #ifndef CONFIG_SYSTEM_SYSTEM
@@ -82,6 +82,12 @@ static void launch_voice_script(void)
 #if defined(CONFIG_EXAMPLES_RACING_VOICE) && CONFIG_EXAMPLES_RACING_VOICE
 #  if CONFIG_SYSTEM_SYSTEM
   int ret;
+
+  if (CONFIG_EXAMPLES_RACING_VOICE_START_SCRIPT[0] == '\0')
+    {
+      printf("[RACING] voice bridge should be started before racing.\n");
+      return;
+    }
 
   printf("[RACING] launch XiaoZhi script: %s\n",
          CONFIG_EXAMPLES_RACING_VOICE_START_SCRIPT);
@@ -291,6 +297,7 @@ int main(int argc, FAR char *argv[])
            * boost 靠触摸按模式驱动(已由 input 层填好 input.boost)。 */
           input.accelerate = true;
           input.brake = false;
+          input.boost = input.boost || input.voiceBoost;
 
           if (app_mode == RACING_APP_GYRO)
             {
